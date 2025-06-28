@@ -1,3 +1,5 @@
+# ---------------------- Part 1: Imports & Nitter dynamic fallback logic ----------------------
+
 import os
 import io
 import random
@@ -14,11 +16,11 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import requests
-import feedparser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 
-# Your always-included instances (even if not listed elsewhere)
+# --- Nitter instance discovery and fallback logic ---
+
 EXTRA_INSTANCES = [
     "https://xcancel.com",
     "https://nitter.poast.org",
@@ -29,9 +31,16 @@ EXTRA_INSTANCES = [
     "https://nitter.kareem.one",
     "https://nuku.trabun.org"
 ]
+STATIC_NITTER_INSTANCES = [
+    "https://nitter.net",
+    "https://nitter.privacydev.net",
+    "https://nitter.poast.org",
+    "https://nitter.1d4.us",
+    "https://nitter.moomoo.me",
+    "https://nitter.pussthecat.org",
+]
 
 def get_nitter_instances_from_html_status():
-    """Scrape Nitter instances from the status.d420.de HTML page that are online and working."""
     url = "https://status.d420.de/"
     try:
         resp = requests.get(url, timeout=10)
@@ -40,7 +49,7 @@ def get_nitter_instances_from_html_status():
         table = soup.find("table")
         if not table:
             return instances
-        for row in table.find_all("tr")[1:]:  # skip header row
+        for row in table.find_all("tr")[1:]:
             cols = row.find_all("td")
             if len(cols) < 4:
                 continue
@@ -60,6 +69,9 @@ def get_nitter_instances_from_html_status():
 def get_all_nitter_instances():
     scraped = get_nitter_instances_from_html_status()
     all_instances = set(scraped) | set(EXTRA_INSTANCES)
+    # If for some reason scraping fails, fall back to static list
+    if not all_instances:
+        all_instances = set(EXTRA_INSTANCES) | set(STATIC_NITTER_INSTANCES)
     return list(all_instances)
 
 def _fetch_feed(rss_url):
@@ -72,15 +84,75 @@ def _fetch_feed(rss_url):
     return None
 
 def get_twitter_rss(username):
+    # 1. Try Twiiit proxy first (auto-redirects to a working Nitter instance)
+    try:
+        rss_url = f"https://twiiit.com/{username}/rss"
+        feed = feedparser.parse(rss_url)
+        if feed.entries:
+            return feed.entries
+    except Exception:
+        pass
+    # 2. Try dynamic Nitter scraping (parallel)
     instances = get_all_nitter_instances()
     urls = [f"{base}/{username}/rss" for base in instances]
+    random.shuffle(urls)
     with ThreadPoolExecutor(max_workers=min(10, len(urls))) as executor:
         future_to_url = {executor.submit(_fetch_feed, url): url for url in urls}
         for future in as_completed(future_to_url):
             result = future.result()
             if result:
-                return result  # Return entries (the RSS feed) from the first working instance
+                return result
+    # 3. Fallback to static Nitter instances and twitrss.me
+    for base_url in STATIC_NITTER_INSTANCES + ["https://twitrss.me/twitter_user_to_rss"]:
+        try:
+            if "nitter" in base_url:
+                rss_url = f"{base_url}/{username}/rss"
+            else:
+                rss_url = f"{base_url}/?user={username}"
+            feed = feedparser.parse(rss_url)
+            if feed.entries:
+                return feed.entries
+        except Exception:
+            continue
     return []
+
+def get_latest_tweet(username):
+    tweets = get_twitter_rss(username)
+    if tweets:
+        entry = tweets[0]
+        return {'id': entry.link, 'text': entry.title, 'url': entry.link}
+    return None
+
+def get_tweets_for_query(query, limit=5):
+    # 1. Try Twiiit for search (not officially supported, but attempt the endpoint)
+    try:
+        rss_url = f"https://twiiit.com/search/rss?f=tweets&q={query}"
+        feed = feedparser.parse(rss_url)
+        if feed.entries:
+            return [{"text": e.title, "url": e.link} for e in feed.entries[:limit]]
+    except Exception:
+        pass
+    # 2. Try dynamic Nitter scraping (parallel)
+    instances = get_all_nitter_instances()
+    random.shuffle(instances)
+    for base_url in instances:
+        try:
+            rss = feedparser.parse(f"{base_url}/search/rss?f=tweets&q={query}")
+            if rss.entries:
+                return [{"text": e.title, "url": e.link} for e in rss.entries[:limit]]
+        except Exception:
+            continue
+    # 3. Fallback to static Nitter instances
+    for base_url in STATIC_NITTER_INSTANCES:
+        try:
+            rss = feedparser.parse(f"{base_url}/search/rss?f=tweets&q={query}")
+            if rss.entries:
+                return [{"text": e.title, "url": e.link} for e in rss.entries[:limit]]
+        except Exception:
+            continue
+    return []
+
+# ---------------------- Part 2: Environment, DB setup, models ----------------------
 
 # --- Load environment ---
 load_dotenv()
@@ -129,67 +201,7 @@ class Portfolio(Base):
     qty = Column(Float)
     price = Column(Float)
 
-Base.metadata.create_all(engine)
-
-# --- Nitter RSS with Twiiit fallback ---
-NITTER_INSTANCES = [
-    "https://nitter.net",
-    "https://nitter.privacydev.net",
-    "https://nitter.poast.org",
-    "https://nitter.1d4.us",
-    "https://nitter.moomoo.me",
-    "https://nitter.pussthecat.org",
-]
-
-def get_twitter_rss(username):
-    # 1. Try Twiiit proxy first (auto-redirects to a working Nitter instance)
-    try:
-        rss_url = f"https://twiiit.com/{username}/rss"
-        feed = feedparser.parse(rss_url)
-        if feed.entries:
-            return feed.entries
-    except Exception:
-        pass
-    # 2. Fallback to your original Nitter instances and twitrss.me
-    for base_url in NITTER_INSTANCES + ["https://twitrss.me/twitter_user_to_rss"]:
-        try:
-            if "nitter" in base_url:
-                rss_url = f"{base_url}/{username}/rss"
-            else:
-                rss_url = f"{base_url}/?user={username}"
-            feed = feedparser.parse(rss_url)
-            if feed.entries:
-                return feed.entries
-        except Exception:
-            continue
-    return []
-
-def get_latest_tweet(username):
-    tweets = get_twitter_rss(username)
-    if tweets:
-        entry = tweets[0]
-        return {'id': entry.link, 'text': entry.title, 'url': entry.link}
-    return None
-
-def get_tweets_for_query(query, limit=5):
-    # 1. Try Twiiit for search (not officially supported, but attempt the endpoint)
-    try:
-        rss_url = f"https://twiiit.com/search/rss?f=tweets&q={query}"
-        feed = feedparser.parse(rss_url)
-        if feed.entries:
-            return [{"text": e.title, "url": e.link} for e in feed.entries[:limit]]
-    except Exception:
-        pass
-    # 2. Fallback to Nitter instances for search
-    random.shuffle(NITTER_INSTANCES)
-    for base_url in NITTER_INSTANCES:
-        try:
-            rss = feedparser.parse(f"{base_url}/search/rss?f=tweets&q={query}")
-            if rss.entries:
-                return [{"text": e.title, "url": e.link} for e in rss.entries[:limit]]
-        except Exception:
-            continue
-    return []
+# ---------------------- Part 3: Flask endpoints & Telegram command handlers ----------------------
 
 # --- Flask webhook with logging ---
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -207,7 +219,7 @@ def telegram_webhook():
 def index():
     return "Bot is alive!", 200
 
-# --- Telegram handlers ---
+# --- Telegram command handlers ---
 
 @bot.message_handler(commands=['start'])
 def handle_start(message):
@@ -223,7 +235,7 @@ def handle_help(message):
         "Intervals: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo. "
         "Defaults to 1mo period and 1d interval (e.g., `/chart GOOG 6mo 1wk`)\n"
         "💬 `/sentiment <text>` - Analyze the sentiment of a given text (e.g., `/sentiment The stock market is booming!`)\n"
-        "🐦 `/tweets <query>` - (Conceptual) Fetch recent tweets related to a query (e.g., `/tweets Tesla`)\n\n"
+        "🐦 `/tweets <query>` - Fetch recent tweets related to a query (e.g., `/tweets Tesla`)\n\n"
         "--- **NEW COMMANDS** ---\n"
         "➕ `/add @user` - Track Twitter account\n"
         "➖ `/remove @user` - Remove tracked account\n"
@@ -258,6 +270,12 @@ def handle_help(message):
         "📥 `/import` - Import tracked accounts and keywords (reply to exported CSV)\n\n"
         "Need help again? Just type `/help`."
     ), parse_mode="Markdown")
+
+# ----------------- (CONTINUED NEXT PART: ALL REMAINING HANDLERS) -----------------
+
+Base.metadata.create_all(engine)
+
+# ---------------------- Part 4: All Telegram command handlers continued ----------------------
 
 @bot.message_handler(commands=['price'])
 def price_handler(message):
@@ -684,6 +702,8 @@ def export_handler(message):
 @bot.message_handler(commands=['import'])
 def import_handler(message):
     bot.reply_to(message, "📥 Import is not yet implemented. (Will import tracked accounts/keywords from CSV)")
+
+# ---------------------- Part 5: Webhook setup and app run block ----------------------
 
 # --- Set webhook on startup ---
 def set_webhook():
