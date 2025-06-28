@@ -120,37 +120,57 @@ def telegram_webhook():
 def index():
     return "Bot is alive!", 200
 
-# --- Telegram handlers (register OUTSIDE main block) ---
+# --- Telegram handlers ---
+
 @bot.message_handler(commands=['start'])
 def handle_start(message):
-    print("Handling /start command!")  # Debug log
     bot.reply_to(message, "👋 Hello! I'm your finance & news bot.\nType /help to see what I can do.")
 
 @bot.message_handler(commands=['help'])
 def handle_help(message):
-    bot.reply_to(
-        message,
-        "📚 *Available Commands:*\n"
-        "💲 /price <ticker> - Get stock price\n"
-        "ℹ️ /info <ticker> - Stock info\n"
-        "📊 /chart <ticker> [period] [interval] - Stock chart\n"
-        "💬 /sentiment <text> - Sentiment analysis\n"
-        "🐦 /tweets <query> - Tweets for query\n"
-        "➕ /add @user - Track Twitter account\n"
-        "➖ /remove @user - Remove tracked account\n"
-        "📋 /list - List tracked accounts\n"
-        "🧹 /clear - Remove all tracked accounts\n"
-        "➕ /addkeyword word - Track keyword\n"
-        "➖ /removekeyword word - Remove keyword\n"
-        "📋 /listkeywords - Show tracked keywords\n"
-        "🔔 /alert TICKER <ABOVE|BELOW> <PRICE> - Price alert\n"
-        "📋 /listalerts - List your alerts\n"
-        "❌ /removealert ID - Remove alert\n"
-        "💰 /addstock TICKER QTY PRICE - Add to portfolio\n"
-        "🗑️ /removestock TICKER - Remove from portfolio\n"
-        "📊 /viewportfolio - View portfolio\n",
-        parse_mode="Markdown"
-    )
+    bot.reply_to(message, (
+        "📈 `/price <ticker>` - Get the current price of a stock (e.g., `/price AAPL`)\n"
+        "ℹ️ `/info <ticker>` - Get general information about a stock (e.g., `/info MSFT`)\n"
+        "📊 `/chart <ticker> [period] [interval]` - Get a chart for a stock. "
+        "Periods: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max. "
+        "Intervals: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo. "
+        "Defaults to 1mo period and 1d interval (e.g., `/chart GOOG 6mo 1wk`)\n"
+        "💬 `/sentiment <text>` - Analyze the sentiment of a given text (e.g., `/sentiment The stock market is booming!`)\n"
+        "🐦 `/tweets <query>` - (Conceptual) Fetch recent tweets related to a query (e.g., `/tweets Tesla`)\n\n"
+        "--- **NEW COMMANDS** ---\n"
+        "➕ `/add @user` - Track Twitter account\n"
+        "➖ `/remove @user` - Remove tracked account\n"
+        "📋 `/list` - List tracked accounts\n"
+        "🧹 `/clear` - Remove all tracked accounts\n"
+        "🗑️ `/cleardb` - Clear all YOUR bot data (DANGEROUS!)\n"
+        "➕ `/addkeyword word` - Track keyword\n"
+        "📋 `/listkeywords` - Show tracked keywords\n"
+        "➖ `/removekeyword word` - Remove keyword\n"
+        "📈 `/graph TICKER PERIOD [candle|line|rsi]` - Show stock graph (e.g., `/graph AAPL 1y candle`)\n"
+        "🔔 `/alert TICKER <ABOVE|BELOW> <PRICE>` - Set a stock price alert (e.g., `/alert GOOGL ABOVE 150`)\n"
+        "📋 `/listalerts` - List your active stock price alerts\n"
+        "❌ `/removealert ID` - Remove a specific price alert by its ID\n"
+        "💰 `/addstock TICKER QUANTITY PRICE` - Add stock to your virtual portfolio (e.g., `/addstock MSFT 10 300.50`)\n"
+        "🗑️ `/removestock TICKER` - Remove stock from your portfolio\n"
+        "📊 `/viewportfolio` - View your virtual stock portfolio performance\n"
+        "⏱️ `/setinterval seconds` - Set scan interval (min 60s)\n"
+        "🤫 `/setquiet <start_hour> <end_hour>` - Set quiet hours EST (HH:MM-HH:MM, e.g., `/setquiet 22:00 07:00`)\n"
+        "🗺️ `/settimezone <TimeZoneName>` - Set your local timezone (e.g., `/settimezone Europe/London`). Use standard IANA names.\n"
+        "🗓️ `/setschedule <daily|weekly> <HH:MM>` - Schedule daily/weekly reports (e.g., `/setschedule daily 09:00`)\n"
+        "⚙️ `/mysettings` - View your settings\n"
+        "🚦 `/status` - Show bot status\n"
+        "⏸️ `/pause` - Pause bot\n"
+        "▶️ `/resume` - Resume bot\n"
+        "🔇 `/mute @user` - Mute user notifications\n"
+        "🔊 `/unmute @user` - Unmute user notifications\n"
+        "📜 `/last @user` - Show last tweet\n"
+        "🔄 `/toggleautoscan` - Toggle auto-scan on/off\n"
+        "🔝 `/top [num]` - Show top N recent tweets from tracked users\n"
+        "🔥 `/trending [num]` - Show top N recent trending hashtags\n"
+        "📤 `/export` - Export tracked accounts and keywords\n"
+        "📥 `/import` - Import tracked accounts and keywords (reply to exported CSV)\n\n"
+        "Need help again? Just type `/help`."
+    ), parse_mode="Markdown")
 
 @bot.message_handler(commands=['price'])
 def price_handler(message):
@@ -178,7 +198,7 @@ def info_handler(message):
         info = data.info
         summary = info.get('longBusinessSummary', 'No info available.')
         bot.reply_to(message, f"ℹ️ {ticker} info:\n{summary}")
-    except Exception as e:
+    except Exception:
         bot.reply_to(message, f"❌ Error fetching info for {ticker}.")
 
 @bot.message_handler(commands=['chart'])
@@ -210,7 +230,7 @@ def chart_handler(message):
         buf.seek(0)
         plt.close()
         bot.send_photo(message.chat.id, buf, caption=f"📊 {ticker} Chart ({period}, {interval})")
-    except Exception as e:
+    except Exception:
         bot.reply_to(message, "❌ Error generating chart.")
 
 @bot.message_handler(commands=['sentiment'])
@@ -295,6 +315,17 @@ def clear_handler(message):
     bot.reply_to(message, f"🧹 Removed {count} tracked Twitter accounts.")
     session.close()
 
+@bot.message_handler(commands=['cleardb'])
+def cleardb_handler(message):
+    session = SessionLocal()
+    session.query(Tracked).filter_by(chat_id=message.chat.id).delete()
+    session.query(Keyword).filter_by(chat_id=message.chat.id).delete()
+    session.query(Alert).filter_by(chat_id=message.chat.id).delete()
+    session.query(Portfolio).filter_by(chat_id=message.chat.id).delete()
+    session.commit()
+    bot.reply_to(message, "🗑️ All your bot data has been erased. This cannot be undone.")
+    session.close()
+
 @bot.message_handler(commands=['addkeyword'])
 def addkeyword_handler(message):
     args = message.text.split()
@@ -338,6 +369,10 @@ def listkeywords_handler(message):
     else:
         bot.reply_to(message, "📋 No keywords tracked.")
     session.close()
+
+@bot.message_handler(commands=['graph'])
+def graph_handler(message):
+    bot.reply_to(message, "📈 Graph command is not implemented yet. Coming soon!")
 
 @bot.message_handler(commands=['alert'])
 def alert_handler(message):
@@ -445,7 +480,80 @@ def viewportfolio_handler(message):
     bot.reply_to(message, "📊 Your portfolio:\n" + "\n".join(lines) + f"\nTotal invested: ${total:.2f}")
     session.close()
 
-# --- Set webhook on startup (call on import, not just main) ---
+@bot.message_handler(commands=['setinterval'])
+def setinterval_handler(message):
+    bot.reply_to(message, "⏱️ Setinterval is not yet implemented. (Will set scan interval for alerts, minimum 60s)")
+
+@bot.message_handler(commands=['setquiet'])
+def setquiet_handler(message):
+    bot.reply_to(message, "🤫 Setquiet is not yet implemented. (Will set quiet hours for notifications)")
+
+@bot.message_handler(commands=['settimezone'])
+def settimezone_handler(message):
+    bot.reply_to(message, "🗺️ Settimezone is not yet implemented. (Will set your timezone for reports)")
+
+@bot.message_handler(commands=['setschedule'])
+def setschedule_handler(message):
+    bot.reply_to(message, "🗓️ Setschedule is not yet implemented. (Will schedule daily/weekly reports)")
+
+@bot.message_handler(commands=['mysettings'])
+def mysettings_handler(message):
+    bot.reply_to(message, "⚙️ Mysettings is not yet implemented. (Will show your settings)")
+
+@bot.message_handler(commands=['status'])
+def status_handler(message):
+    bot.reply_to(message, "🚦 Status is not yet implemented. (Will show bot status)")
+
+@bot.message_handler(commands=['pause'])
+def pause_handler(message):
+    bot.reply_to(message, "⏸️ Pause is not yet implemented. (Will pause notifications or scans)")
+
+@bot.message_handler(commands=['resume'])
+def resume_handler(message):
+    bot.reply_to(message, "▶️ Resume is not yet implemented. (Will resume notifications or scans)")
+
+@bot.message_handler(commands=['mute'])
+def mute_handler(message):
+    bot.reply_to(message, "🔇 Mute is not yet implemented. (Will mute notifications for a user)")
+
+@bot.message_handler(commands=['unmute'])
+def unmute_handler(message):
+    bot.reply_to(message, "🔊 Unmute is not yet implemented. (Will unmute notifications for a user)")
+
+@bot.message_handler(commands=['last'])
+def last_handler(message):
+    args = message.text.split()
+    if len(args) < 2 or not args[1].startswith('@'):
+        bot.reply_to(message, "Usage: /last @username")
+        return
+    username = args[1][1:]
+    tweet = get_latest_tweet(username)
+    if tweet:
+        bot.reply_to(message, f"🐦 Last tweet from @{username}:\n\n{tweet['text']}\n{tweet['url']}")
+    else:
+        bot.reply_to(message, f"❌ Could not retrieve tweets for @{username}. (Account may be protected, rate-limited, or unavailable.)")
+
+@bot.message_handler(commands=['toggleautoscan'])
+def toggleautoscan_handler(message):
+    bot.reply_to(message, "🔄 Toggleautoscan is not yet implemented. (Will toggle auto-scan feature)")
+
+@bot.message_handler(commands=['top'])
+def top_handler(message):
+    bot.reply_to(message, "🔝 Top is not yet implemented. (Will show top N tweets from tracked users)")
+
+@bot.message_handler(commands=['trending'])
+def trending_handler(message):
+    bot.reply_to(message, "🔥 Trending is not yet implemented. (Will show top trending hashtags)")
+
+@bot.message_handler(commands=['export'])
+def export_handler(message):
+    bot.reply_to(message, "📤 Export is not yet implemented. (Will export tracked accounts/keywords)")
+
+@bot.message_handler(commands=['import'])
+def import_handler(message):
+    bot.reply_to(message, "📥 Import is not yet implemented. (Will import tracked accounts/keywords from CSV)")
+
+# --- Set webhook on startup ---
 def set_webhook():
     bot.remove_webhook()
     bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
