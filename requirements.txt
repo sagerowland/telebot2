@@ -13,3 +13,4 @@ SQLAlchemy
 feedparser
 psycopg2-binary
 pytz
+beautifulsoup4
