@@ -13,6 +13,74 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import requests
+import feedparser
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from bs4 import BeautifulSoup
+
+# Your always-included instances (even if not listed elsewhere)
+EXTRA_INSTANCES = [
+    "https://xcancel.com",
+    "https://nitter.poast.org",
+    "https://nitter.privacyredirect.com",
+    "https://lightbrd.com",
+    "https://nitter.space",
+    "https://nitter.tiekoetter.com",
+    "https://nitter.kareem.one",
+    "https://nuku.trabun.org"
+]
+
+def get_nitter_instances_from_html_status():
+    """Scrape Nitter instances from the status.d420.de HTML page that are online and working."""
+    url = "https://status.d420.de/"
+    try:
+        resp = requests.get(url, timeout=10)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        instances = []
+        table = soup.find("table")
+        if not table:
+            return instances
+        for row in table.find_all("tr")[1:]:  # skip header row
+            cols = row.find_all("td")
+            if len(cols) < 4:
+                continue
+            url_tag = cols[0].find("a")
+            online = cols[1].text.strip()
+            working = cols[2].text.strip()
+            if url_tag and online == "✅" and working == "✅":
+                instance_url = url_tag["href"].rstrip("/")
+                if not instance_url.startswith("http"):
+                    instance_url = "https://" + instance_url
+                instances.append(instance_url)
+        return instances
+    except Exception as e:
+        print(f"Error fetching Nitter status: {e}")
+        return []
+
+def get_all_nitter_instances():
+    scraped = get_nitter_instances_from_html_status()
+    all_instances = set(scraped) | set(EXTRA_INSTANCES)
+    return list(all_instances)
+
+def _fetch_feed(rss_url):
+    try:
+        feed = feedparser.parse(rss_url)
+        if feed.entries:
+            return feed.entries
+    except Exception:
+        pass
+    return None
+
+def get_twitter_rss(username):
+    instances = get_all_nitter_instances()
+    urls = [f"{base}/{username}/rss" for base in instances]
+    with ThreadPoolExecutor(max_workers=min(10, len(urls))) as executor:
+        future_to_url = {executor.submit(_fetch_feed, url): url for url in urls}
+        for future in as_completed(future_to_url):
+            result = future.result()
+            if result:
+                return result  # Return entries (the RSS feed) from the first working instance
+    return []
 
 # --- Load environment ---
 load_dotenv()
