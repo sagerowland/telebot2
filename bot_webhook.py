@@ -25,7 +25,12 @@ app = Flask(__name__)
 
 # --- Database setup ---
 Base = declarative_base()
-engine = create_engine(DATABASE_URL)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    connect_args={"sslmode": "require"}
+)
 SessionLocal = sessionmaker(bind=engine)
 
 class Tracked(Base):
