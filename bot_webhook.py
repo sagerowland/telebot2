@@ -233,6 +233,41 @@ def chart_handler(message):
     except Exception:
         bot.reply_to(message, "❌ Error generating chart.")
 
+@bot.message_handler(commands=['top'])
+def top_handler(message):
+    # Default to 5 if no number given
+    args = message.text.split()
+    try:
+        n = int(args[1]) if len(args) > 1 else 5
+    except ValueError:
+        n = 5
+    session = SessionLocal()
+    users = session.query(Tracked).filter_by(chat_id=message.chat.id).all()
+    if not users:
+        bot.reply_to(message, "📋 No Twitter accounts tracked.")
+        session.close()
+        return
+    all_tweets = []
+    for user in users:
+        entries = get_twitter_rss(user.username)
+        for entry in entries[:3]:  # Only take a few per user to avoid spam
+            all_tweets.append({
+                "user": user.username,
+                "title": entry.title,
+                "link": entry.link,
+                "published": entry.get("published_parsed", None)
+            })
+    session.close()
+    if not all_tweets:
+        bot.reply_to(message, "🔝 No recent tweets found for tracked users.")
+        return
+    # Sort by published date if available
+    all_tweets = [t for t in all_tweets if t["published"]]
+    all_tweets.sort(key=lambda t: t["published"], reverse=True)
+    top_tweets = all_tweets[:n]
+    reply = "\n\n".join([f"@{t['user']}: {t['title']}\n{t['link']}" for t in top_tweets])
+    bot.reply_to(message, reply[:4096])
+
 @bot.message_handler(commands=['sentiment'])
 def sentiment_handler(message):
     text = message.text[len("/sentiment "):].strip()
