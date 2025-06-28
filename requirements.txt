@@ -14,5 +14,3 @@ feedparser
 psycopg2-binary
 pytz
 beautifulsoup4
-celery
-redis
