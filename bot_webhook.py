@@ -104,7 +104,15 @@ def get_latest_tweet(username):
     return None
 
 def get_tweets_for_query(query, limit=5):
-    # Try Twiiit for search as well (though Twiiit does not proxy search, so fallback to Nitter list)
+    # 1. Try Twiiit for search (not officially supported, but attempt the endpoint)
+    try:
+        rss_url = f"https://twiiit.com/search/rss?f=tweets&q={query}"
+        feed = feedparser.parse(rss_url)
+        if feed.entries:
+            return [{"text": e.title, "url": e.link} for e in feed.entries[:limit]]
+    except Exception:
+        pass
+    # 2. Fallback to Nitter instances for search
     random.shuffle(NITTER_INSTANCES)
     for base_url in NITTER_INSTANCES:
         try:
@@ -176,7 +184,7 @@ def handle_help(message):
         "🔊 `/unmute @user` - Unmute user notifications\n"
         "📜 `/last @user` - Show last tweet\n"
         "🔄 `/toggleautoscan` - Toggle auto-scan on/off\n"
-        "🔝 `/top [num]` - Show top N recent tweets from tracked users\n"
+        "🔝 `/top [num] [@user]` - Show top N recent tweets from tracked users or a specific user\n"
         "🔥 `/trending [num]` - Show top N recent trending hashtags\n"
         "📤 `/export` - Export tracked accounts and keywords\n"
         "📥 `/import` - Import tracked accounts and keywords (reply to exported CSV)\n\n"
@@ -550,7 +558,52 @@ def toggleautoscan_handler(message):
 
 @bot.message_handler(commands=['top'])
 def top_handler(message):
-    bot.reply_to(message, "🔝 Top is not yet implemented. (Will show top N tweets from tracked users)")
+    args = message.text.split()
+    limit = 5
+    username = None
+    if len(args) > 1:
+        if args[1].startswith('@'):
+            username = args[1][1:]
+        else:
+            try:
+                limit = int(args[1])
+                if len(args) > 2 and args[2].startswith('@'):
+                    username = args[2][1:]
+            except ValueError:
+                if args[1].startswith('@'):
+                    username = args[1][1:]
+
+    session = SessionLocal()
+    if username:
+        users = session.query(Tracked).filter_by(chat_id=message.chat.id, username=username).all()
+    else:
+        users = session.query(Tracked).filter_by(chat_id=message.chat.id).all()
+    session.close()
+
+    if not users:
+        bot.reply_to(message, "📋 No Twitter accounts tracked." if not username else f"📋 @{username} is not tracked.")
+        return
+
+    tweets = []
+    for user in users:
+        user_tweets = get_twitter_rss(user.username)
+        if user_tweets:
+            for entry in user_tweets[:limit]:
+                tweets.append({
+                    "username": user.username,
+                    "title": entry.title,
+                    "link": entry.link,
+                    "published": getattr(entry, "published_parsed", None)
+                })
+
+    tweets = [t for t in tweets if t["published"]]
+    tweets.sort(key=lambda x: x["published"], reverse=True)
+
+    if not tweets:
+        bot.reply_to(message, "🐦 No recent tweets found for tracked users." if not username else f"🐦 No recent tweets found for @{username}.")
+    else:
+        reply = "\n\n".join([f"🐦 @{t['username']}: {t['title']}\n{t['link']}" for t in tweets[:limit]])
+        bot.reply_to(message, reply[:4096])
 
 @bot.message_handler(commands=['trending'])
 def trending_handler(message):
