@@ -254,8 +254,7 @@ def send_tweet_with_image(chat_id, entry, prefix):
         print(f"Error sending message to chat {chat_id}: {e}")
 
 # --- AUTOSCAN CONTROL COMMANDS ---
-@bot.message_handler(commands=['pauseautoscan'])
-def pauseautoscan_handler(message):
+def pause_autoscan_handler(message):
     session = SessionLocal()
     settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
     if not settings:
@@ -267,8 +266,7 @@ def pauseautoscan_handler(message):
     session.close()
     bot.reply_to(message, "⏸️ Autoscan paused.")
 
-@bot.message_handler(commands=['resumeautoscan'])
-def resumeautoscan_handler(message):
+def resume_autoscan_handler(message):
     session = SessionLocal()
     settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
     if not settings:
@@ -279,6 +277,35 @@ def resumeautoscan_handler(message):
     session.commit()
     session.close()
     bot.reply_to(message, "▶️ Autoscan resumed.")
+
+def toggle_autoscan_handler(message):
+    session = SessionLocal()
+    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
+    if not settings:
+        settings = UserSettings(chat_id=message.chat.id, autoscan_paused=True)
+        session.add(settings)
+        paused = True
+    else:
+        settings.autoscan_paused = not settings.autoscan_paused
+        paused = settings.autoscan_paused
+    session.commit()
+    session.close()
+    if paused:
+        bot.reply_to(message, "⏸️ Autoscan paused.")
+    else:
+        bot.reply_to(message, "▶️ Autoscan resumed.")
+
+@bot.message_handler(commands=['pause', 'pauseautoscan'])
+def pause_handler(message):
+    pause_autoscan_handler(message)
+
+@bot.message_handler(commands=['resume', 'resumeautoscan'])
+def resume_handler(message):
+    resume_autoscan_handler(message)
+
+@bot.message_handler(commands=['toggleautoscan'])
+def toggleautoscan_command_handler(message):
+    toggle_autoscan_handler(message)
 
 @bot.message_handler(commands=['scanmode'])
 def scanmode_handler(message):
@@ -445,6 +472,10 @@ def set_webhook():
 set_webhook()
 
 # --- ALL YOUR ORIGINAL COMMAND HANDLERS BELOW ---
+# (Your full set of @bot.message_handler functions goes here—leave unchanged.)
+
+# ... (all your original handlers, as in your current file) ...
+
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     bot.reply_to(message, "👋 Hello! I'm your finance & news bot.\nType /help to see what I can do.")
@@ -457,7 +488,6 @@ def handle_help(message):
         "📊 `/chart <ticker> [period] [interval]` - Get a chart for a stock.\n"
         "💬 `/sentiment <text>` - Analyze the sentiment of a given text\n"
         "🐦 `/tweets <query>` - Fetch recent tweets related to a query\n"
-        "--- **NEW COMMANDS** ---\n"
         "➕ `/add @user` - Track Twitter account\n"
         "➖ `/remove @user` - Remove tracked account\n"
         "📋 `/list` - List tracked accounts\n"
@@ -479,11 +509,20 @@ def handle_help(message):
         "🗓️ `/setschedule <daily|weekly> <HH:MM>` - Schedule daily/weekly reports\n"
         "⚙️ `/mysettings` - View your settings\n"
         "🚦 `/status` - Show bot status\n"
+        "🔇 `/mute @user` - Mute user notifications\n"
+        "🔊 `/unmute @user` - Unmute user notifications\n"
         "📜 `/last @user` - Show last tweet\n"
         "🔝 `/top [num] [@user]` - Show top N recent tweets\n"
         "🔥 `/trending [num]` - Show top N trending hashtags\n"
         "📤 `/export` - Export tracked accounts/keywords\n"
         "📥 `/import` - Import tracked accounts/keywords\n"
+        "--- **AUTOSCAN COMMANDS** ---\n"
+        "⏸️ `/pause` or `/pauseautoscan` - Pause autoscan for this chat\n"
+        "▶️ `/resume` or `/resumeautoscan` - Resume autoscan for this chat\n"
+        "🔄 `/toggleautoscan` - Toggle autoscan pause/resume for this chat\n"
+        "🛠️ `/scanmode <all|accounts|keywords>` - Set scan mode (all/accounts/keywords)\n"
+        "🔢 `/setscandepth <number_of_tweets>` - Set how many tweets to scan for each tracked account/keyword\n"
+        "⚙️ `/myautoscan` - Show your current autoscan settings\n"
     ), parse_mode="Markdown")
 
 @bot.message_handler(commands=['price'])
