@@ -111,20 +111,26 @@ def get_tweets_for_query(query, limit=5):
             continue
     return []
 
-# --- Flask webhook ---
+# --- Flask webhook with logging ---
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
-    update = Update.de_json(request.stream.read().decode("utf-8"))
-    bot.process_new_updates([update])
+    raw = request.stream.read().decode("utf-8")
+    print(f"Received update: {raw}")  # Debug log
+    try:
+        update = Update.de_json(raw)
+        bot.process_new_updates([update])
+    except Exception as e:
+        print(f"Error processing update: {e}")
     return "OK", 200
 
 @app.route("/")
 def index():
-    return "Bot is alive! 🤖", 200
+    return "Bot is alive!", 200
 
-# --- Telegram handlers ---
+# --- Telegram handlers (register OUTSIDE main block) ---
 @bot.message_handler(commands=['start'])
 def handle_start(message):
+    print("Handling /start command!")  # Debug log
     bot.reply_to(message, "👋 Hello! I'm your finance & news bot.\nType /help to see what I can do.")
 
 @bot.message_handler(commands=['help'])
@@ -196,7 +202,9 @@ def info_handler(message):
     try:
         data = yf.Ticker(ticker)
         info = data.info
-        bot.reply_to(message, f"ℹ️ {ticker} info:\n{info.get('longBusinessSummary', 'No info available.')}")
+        # Sometimes info dict is empty if ticker is invalid
+        summary = info.get('longBusinessSummary', 'No info available.')
+        bot.reply_to(message, f"ℹ️ {ticker} info:\n{summary}")
     except Exception as e:
         bot.reply_to(message, f"❌ Error fetching info for {ticker}.")
 
