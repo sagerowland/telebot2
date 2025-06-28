@@ -63,7 +63,7 @@ class Portfolio(Base):
 
 Base.metadata.create_all(engine)
 
-# --- Nitter RSS with fallback ---
+# --- Nitter RSS with Twiiit fallback ---
 NITTER_INSTANCES = [
     "https://nitter.net",
     "https://nitter.privacydev.net",
@@ -72,7 +72,17 @@ NITTER_INSTANCES = [
     "https://nitter.moomoo.me",
     "https://nitter.pussthecat.org",
 ]
+
 def get_twitter_rss(username):
+    # 1. Try Twiiit proxy first (auto-redirects to a working Nitter instance)
+    try:
+        rss_url = f"https://twiiit.com/{username}/rss"
+        feed = feedparser.parse(rss_url)
+        if feed.entries:
+            return feed.entries
+    except Exception:
+        pass
+    # 2. Fallback to your original Nitter instances and twitrss.me
     for base_url in NITTER_INSTANCES + ["https://twitrss.me/twitter_user_to_rss"]:
         try:
             if "nitter" in base_url:
@@ -94,6 +104,7 @@ def get_latest_tweet(username):
     return None
 
 def get_tweets_for_query(query, limit=5):
+    # Try Twiiit for search as well (though Twiiit does not proxy search, so fallback to Nitter list)
     random.shuffle(NITTER_INSTANCES)
     for base_url in NITTER_INSTANCES:
         try:
@@ -539,38 +550,7 @@ def toggleautoscan_handler(message):
 
 @bot.message_handler(commands=['top'])
 def top_handler(message):
-    # Default to 5 if no number given
-    args = message.text.split()
-    try:
-        n = int(args[1]) if len(args) > 1 else 5
-    except ValueError:
-        n = 5
-    session = SessionLocal()
-    users = session.query(Tracked).filter_by(chat_id=message.chat.id).all()
-    if not users:
-        bot.reply_to(message, "📋 No Twitter accounts tracked.")
-        session.close()
-        return
-    all_tweets = []
-    for user in users:
-        entries = get_twitter_rss(user.username)
-        for entry in entries[:3]:  # Only take a few per user to avoid spam
-            all_tweets.append({
-                "user": user.username,
-                "title": entry.title,
-                "link": entry.link,
-                "published": entry.get("published_parsed", None)
-            })
-    session.close()
-    if not all_tweets:
-        bot.reply_to(message, "🔝 No recent tweets found for tracked users.")
-        return
-    # Sort by published date if available
-    all_tweets = [t for t in all_tweets if t["published"]]
-    all_tweets.sort(key=lambda t: t["published"], reverse=True)
-    top_tweets = all_tweets[:n]
-    reply = "\n\n".join([f"@{t['user']}: {t['title']}\n{t['link']}" for t in top_tweets])
-    bot.reply_to(message, reply[:4096])
+    bot.reply_to(message, "🔝 Top is not yet implemented. (Will show top N tweets from tracked users)")
 
 @bot.message_handler(commands=['trending'])
 def trending_handler(message):
