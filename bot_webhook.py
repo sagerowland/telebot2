@@ -190,10 +190,18 @@ def chart_handler(message):
     ticker = args[1].upper()
     period = args[2] if len(args) > 2 else "1mo"
     interval = args[3] if len(args) > 3 else "1d"
+    valid_periods = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
+    valid_intervals = ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"]
+    if period not in valid_periods:
+        bot.reply_to(message, f"❌ Invalid period '{period}'. Valid: {', '.join(valid_periods)}")
+        return
+    if interval not in valid_intervals:
+        bot.reply_to(message, f"❌ Invalid interval '{interval}'. Valid: {', '.join(valid_intervals)}")
+        return
     try:
         data = yf.Ticker(ticker).history(period=period, interval=interval)
         if data.empty:
-            bot.reply_to(message, "❌ No data found.")
+            bot.reply_to(message, "❌ No data found for this period/interval.")
             return
         plt.figure(figsize=(10,4))
         data['Close'].plot(title=f"{ticker} Close Price")
