@@ -1,10 +1,11 @@
 import os
 import io
 import random
+import time
 from flask import Flask, request
 import telebot
-from telebot.types import Update, InputFile
-from sqlalchemy import create_engine, Column, BigInteger, String, Float, Integer
+from telebot.types import Update
+from sqlalchemy import create_engine, Column, BigInteger, String, Float, Integer, Boolean, UniqueConstraint
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
@@ -16,6 +17,7 @@ from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
@@ -197,6 +199,31 @@ class Portfolio(Base):
     qty = Column(Float)
     price = Column(Float)
 
+# --- AUTOSCAN USER SETTINGS AND LAST SEEN MODELS ---
+class UserSettings(Base):
+    __tablename__ = 'user_settings'
+    chat_id = Column(BigInteger, primary_key=True)
+    autoscan_paused = Column(Boolean, default=False)
+    scan_accounts = Column(Boolean, default=True)
+    scan_keywords = Column(Boolean, default=True)
+    scan_depth = Column(Integer, default=3)
+
+class LastSeenUser(Base):
+    __tablename__ = 'last_seen_user'
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(BigInteger)
+    username = Column(String)
+    tweet_id = Column(String)
+    __table_args__ = (UniqueConstraint('chat_id', 'username', name='uq_user_chat'),)
+
+class LastSeenKeyword(Base):
+    __tablename__ = 'last_seen_keyword'
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(BigInteger)
+    keyword = Column(String)
+    tweet_id = Column(String)
+    __table_args__ = (UniqueConstraint('chat_id', 'keyword', name='uq_keyword_chat'),)
+
 Base.metadata.create_all(engine)
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
@@ -219,13 +246,206 @@ def send_tweet_with_image(chat_id, entry, prefix):
     url = entry.link
     image_url = extract_image_url(entry)
     caption = f"{prefix}\n\n{text}\n{url}"
-    if image_url:
-        bot.send_photo(chat_id, image_url, caption=caption)
+    try:
+        if image_url:
+            bot.send_photo(chat_id, image_url, caption=caption)
+        else:
+            bot.send_message(chat_id, caption)
+    except Exception as e:
+        print(f"Error sending message to chat {chat_id}: {e}")
+
+# --- AUTOSCAN CONTROL COMMANDS ---
+@bot.message_handler(commands=['pauseautoscan'])
+def pauseautoscan_handler(message):
+    session = SessionLocal()
+    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
+    if not settings:
+        settings = UserSettings(chat_id=message.chat.id, autoscan_paused=True)
+        session.add(settings)
     else:
-        bot.send_message(chat_id, caption)
+        settings.autoscan_paused = True
+    session.commit()
+    session.close()
+    bot.reply_to(message, "⏸️ Autoscan paused.")
 
-# --- Telegram command handlers ---
+@bot.message_handler(commands=['resumeautoscan'])
+def resumeautoscan_handler(message):
+    session = SessionLocal()
+    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
+    if not settings:
+        settings = UserSettings(chat_id=message.chat.id, autoscan_paused=False)
+        session.add(settings)
+    else:
+        settings.autoscan_paused = False
+    session.commit()
+    session.close()
+    bot.reply_to(message, "▶️ Autoscan resumed.")
 
+@bot.message_handler(commands=['scanmode'])
+def scanmode_handler(message):
+    args = message.text.split()
+    if len(args) < 2 or args[1].lower() not in ("all", "accounts", "keywords"):
+        bot.reply_to(message, "🛠️ Usage: /scanmode <all|accounts|keywords>")
+        return
+    mode = args[1].lower()
+    session = SessionLocal()
+    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
+    if not settings:
+        settings = UserSettings(chat_id=message.chat.id)
+        session.add(settings)
+    if mode == "all":
+        settings.scan_accounts = True
+        settings.scan_keywords = True
+    elif mode == "accounts":
+        settings.scan_accounts = True
+        settings.scan_keywords = False
+    elif mode == "keywords":
+        settings.scan_accounts = False
+        settings.scan_keywords = True
+    session.commit()
+    session.close()
+    bot.reply_to(message, f"🛠️ Scan mode set to {mode}.")
+
+@bot.message_handler(commands=['setscandepth'])
+def setscandepth_handler(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "🔢 Usage: /setscandepth <number_of_tweets>")
+        return
+    try:
+        depth = int(args[1])
+        if depth < 1 or depth > 20:
+            bot.reply_to(message, "🔢 Scan depth must be between 1 and 20.")
+            return
+        session = SessionLocal()
+        settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
+        if not settings:
+            settings = UserSettings(chat_id=message.chat.id, scan_depth=depth)
+            session.add(settings)
+        else:
+            settings.scan_depth = depth
+        session.commit()
+        session.close()
+        bot.reply_to(message, f"🔢 Scan depth set to {depth}.")
+    except Exception:
+        bot.reply_to(message, "❌ Invalid scan depth.")
+
+@bot.message_handler(commands=['myautoscan'])
+def myautoscan_handler(message):
+    session = SessionLocal()
+    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
+    if not settings:
+        bot.reply_to(message, "⚙️ No custom autoscan settings yet.")
+        session.close()
+        return
+    status = "Paused" if settings.autoscan_paused else "Active"
+    mode = []
+    if settings.scan_accounts: mode.append("accounts")
+    if settings.scan_keywords: mode.append("keywords")
+    bot.reply_to(
+        message,
+        f"⚙️ Autoscan status: {status}\n"
+        f"Scan: {', '.join(mode) if mode else 'none'}\n"
+        f"Scan depth: {settings.scan_depth}"
+    )
+    session.close()
+
+# --- AUTOSCAN SCHEDULER FUNCTION ---
+def autoscan():
+    print("🍀 Autoscan running with deduplication, rate-limit, error handling, and user controls!")
+    session = SessionLocal()
+    RATE_LIMIT_PER_RUN = 30
+    sent_count = 0
+
+    all_chats = set(
+        [r[0] for r in session.query(Tracked.chat_id).distinct()] +
+        [r[0] for r in session.query(Keyword.chat_id).distinct()]
+    )
+    for chat_id in all_chats:
+        settings = session.query(UserSettings).filter_by(chat_id=chat_id).first()
+        paused = settings.autoscan_paused if settings else False
+        scan_accounts = settings.scan_accounts if settings else True
+        scan_keywords = settings.scan_keywords if settings else True
+        scan_depth = settings.scan_depth if settings else 3
+        if paused:
+            continue
+
+        try:
+            if scan_accounts:
+                users = session.query(Tracked).filter_by(chat_id=chat_id).all()
+                for user in users:
+                    if sent_count >= RATE_LIMIT_PER_RUN:
+                        print("Rate limit reached. Pausing autoscan for this run.")
+                        session.close()
+                        return
+                    tweets = get_twitter_rss(user.username)
+                    if not tweets:
+                        continue
+                    last_seen = session.query(LastSeenUser).filter_by(chat_id=chat_id, username=user.username).first()
+                    new_tweets = []
+                    for entry in tweets[:scan_depth]:
+                        tweet_id = getattr(entry, "id", None) or entry.link
+                        if last_seen and tweet_id == last_seen.tweet_id:
+                            break
+                        new_tweets.append((tweet_id, entry))
+                    for tweet_id, entry in reversed(new_tweets):
+                        try:
+                            send_tweet_with_image(chat_id, entry, f"🍀 Autoscan @{user.username}:")
+                            sent_count += 1
+                        except Exception as e:
+                            print(f"Error sending tweet for @{user.username} to chat {chat_id}: {e}")
+                        if not last_seen:
+                            last_seen = LastSeenUser(chat_id=chat_id, username=user.username, tweet_id=tweet_id)
+                            session.add(last_seen)
+                        else:
+                            last_seen.tweet_id = tweet_id
+                        session.commit()
+            if scan_keywords:
+                keywords = session.query(Keyword).filter_by(chat_id=chat_id).all()
+                for kw in keywords:
+                    if sent_count >= RATE_LIMIT_PER_RUN:
+                        print("Rate limit reached. Pausing autoscan for this run.")
+                        session.close()
+                        return
+                    tweets = get_tweets_for_query(kw.keyword, limit=scan_depth)
+                    if not tweets:
+                        continue
+                    last_seen = session.query(LastSeenKeyword).filter_by(chat_id=chat_id, keyword=kw.keyword).first()
+                    new_tweets = []
+                    for entry in tweets:
+                        tweet_id = getattr(entry, "id", None) or entry.link
+                        if last_seen and tweet_id == last_seen.tweet_id:
+                            break
+                        new_tweets.append((tweet_id, entry))
+                    for tweet_id, entry in reversed(new_tweets):
+                        try:
+                            send_tweet_with_image(chat_id, entry, f"🍀 Autoscan keyword '{kw.keyword}':")
+                            sent_count += 1
+                        except Exception as e:
+                            print(f"Error sending keyword '{kw.keyword}' in chat {chat_id}: {e}")
+                        if not last_seen:
+                            last_seen = LastSeenKeyword(chat_id=chat_id, keyword=kw.keyword, tweet_id=tweet_id)
+                            session.add(last_seen)
+                        else:
+                            last_seen.tweet_id = tweet_id
+                        session.commit()
+        except Exception as e:
+            print(f"Error scanning chat {chat_id}: {e}")
+    session.close()
+
+# --- APScheduler setup ---
+scheduler = BackgroundScheduler()
+scheduler.add_job(autoscan, 'interval', minutes=5)
+scheduler.start()
+
+# --- Set webhook on startup ---
+def set_webhook():
+    bot.remove_webhook()
+    bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+
+set_webhook()
+
+# --- ALL YOUR ORIGINAL COMMAND HANDLERS BELOW ---
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     bot.reply_to(message, "👋 Hello! I'm your finance & news bot.\nType /help to see what I can do.")
@@ -686,13 +906,6 @@ def export_handler(message):
 @bot.message_handler(commands=['import'])
 def import_handler(message):
     bot.reply_to(message, "📥 Import is not yet implemented. (Will import tracked accounts/keywords from CSV)")
-
-# --- Set webhook on startup ---
-def set_webhook():
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
-
-set_webhook()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
