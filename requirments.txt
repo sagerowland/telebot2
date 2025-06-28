@@ -1,0 +1,15 @@
+pyTelegramBotAPI
+python-dotenv
+yfinance
+matplotlib
+mplfinance
+pandas
+textblob
+vaderSentiment
+requests
+Flask
+gunicorn
+SQLAlchemy
+feedparser
+psycopg2-binary
+pytz
