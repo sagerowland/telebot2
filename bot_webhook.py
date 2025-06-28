@@ -199,7 +199,6 @@ class Portfolio(Base):
     qty = Column(Float)
     price = Column(Float)
 
-# --- AUTOSCAN USER SETTINGS AND LAST SEEN MODELS ---
 class UserSettings(Base):
     __tablename__ = 'user_settings'
     chat_id = Column(BigInteger, primary_key=True)
@@ -480,12 +479,7 @@ def handle_help(message):
         "🗓️ `/setschedule <daily|weekly> <HH:MM>` - Schedule daily/weekly reports\n"
         "⚙️ `/mysettings` - View your settings\n"
         "🚦 `/status` - Show bot status\n"
-        "⏸️ `/pause` - Pause bot\n"
-        "▶️ `/resume` - Resume bot\n"
-        "🔇 `/mute @user` - Mute user notifications\n"
-        "🔊 `/unmute @user` - Unmute user notifications\n"
         "📜 `/last @user` - Show last tweet\n"
-        "🔄 `/toggleautoscan` - Toggle auto-scan on/off\n"
         "🔝 `/top [num] [@user]` - Show top N recent tweets\n"
         "🔥 `/trending [num]` - Show top N trending hashtags\n"
         "📤 `/export` - Export tracked accounts/keywords\n"
@@ -824,14 +818,6 @@ def mysettings_handler(message):
 def status_handler(message):
     bot.reply_to(message, "🚦 Status is not yet implemented. (Will show bot status)")
 
-@bot.message_handler(commands=['pause'])
-def pause_handler(message):
-    bot.reply_to(message, "⏸️ Pause is not yet implemented. (Will pause notifications or scans)")
-
-@bot.message_handler(commands=['resume'])
-def resume_handler(message):
-    bot.reply_to(message, "▶️ Resume is not yet implemented. (Will resume notifications or scans)")
-
 @bot.message_handler(commands=['mute'])
 def mute_handler(message):
     bot.reply_to(message, "🔇 Mute is not yet implemented. (Will mute notifications for a user)")
@@ -852,10 +838,6 @@ def last_handler(message):
         send_tweet_with_image(message.chat.id, entry, f"🐦 Last tweet from @{username}:")
     else:
         bot.reply_to(message, f"❌ Could not retrieve tweets for @{username}. (Account may be protected, rate-limited, or unavailable.)")
-
-@bot.message_handler(commands=['toggleautoscan'])
-def toggleautoscan_handler(message):
-    bot.reply_to(message, "🔄 Toggleautoscan is not yet implemented. (Will toggle auto-scan feature)")
 
 @bot.message_handler(commands=['top'])
 def top_handler(message):
