@@ -1,5 +1,3 @@
-# ---------------------- Part 1: Imports & Nitter dynamic fallback logic ----------------------
-
 import os
 import io
 import random
@@ -20,7 +18,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 
 # --- Nitter instance discovery and fallback logic ---
-
 EXTRA_INSTANCES = [
     "https://xcancel.com",
     "https://nitter.poast.org",
@@ -69,7 +66,6 @@ def get_nitter_instances_from_html_status():
 def get_all_nitter_instances():
     scraped = get_nitter_instances_from_html_status()
     all_instances = set(scraped) | set(EXTRA_INSTANCES)
-    # If for some reason scraping fails, fall back to static list
     if not all_instances:
         all_instances = set(EXTRA_INSTANCES) | set(STATIC_NITTER_INSTANCES)
     return list(all_instances)
@@ -84,7 +80,6 @@ def _fetch_feed(rss_url):
     return None
 
 def get_twitter_rss(username):
-    # 1. Try Twiiit proxy first (auto-redirects to a working Nitter instance)
     try:
         rss_url = f"https://twiiit.com/{username}/rss"
         feed = feedparser.parse(rss_url)
@@ -92,7 +87,6 @@ def get_twitter_rss(username):
             return feed.entries
     except Exception:
         pass
-    # 2. Try dynamic Nitter scraping (parallel)
     instances = get_all_nitter_instances()
     urls = [f"{base}/{username}/rss" for base in instances]
     random.shuffle(urls)
@@ -102,7 +96,6 @@ def get_twitter_rss(username):
             result = future.result()
             if result:
                 return result
-    # 3. Fallback to static Nitter instances and twitrss.me
     for base_url in STATIC_NITTER_INSTANCES + ["https://twitrss.me/twitter_user_to_rss"]:
         try:
             if "nitter" in base_url:
@@ -116,43 +109,46 @@ def get_twitter_rss(username):
             continue
     return []
 
+def extract_image_url(entry):
+    if hasattr(entry, 'media_content') and entry.media_content:
+        return entry.media_content[0].get('url')
+    elif hasattr(entry, 'links'):
+        for link in entry.links:
+            if link.get('type', '').startswith('image/'):
+                return link['href']
+    return None
+
 def get_latest_tweet(username):
     tweets = get_twitter_rss(username)
     if tweets:
-        entry = tweets[0]
-        return {'id': entry.link, 'text': entry.title, 'url': entry.link}
+        return tweets[0]
     return None
 
 def get_tweets_for_query(query, limit=5):
-    # 1. Try Twiiit for search (not officially supported, but attempt the endpoint)
     try:
         rss_url = f"https://twiiit.com/search/rss?f=tweets&q={query}"
         feed = feedparser.parse(rss_url)
         if feed.entries:
-            return [{"text": e.title, "url": e.link} for e in feed.entries[:limit]]
+            return feed.entries[:limit]
     except Exception:
         pass
-    # 2. Try dynamic Nitter scraping (parallel)
     instances = get_all_nitter_instances()
     random.shuffle(instances)
     for base_url in instances:
         try:
             rss = feedparser.parse(f"{base_url}/search/rss?f=tweets&q={query}")
             if rss.entries:
-                return [{"text": e.title, "url": e.link} for e in rss.entries[:limit]]
+                return rss.entries[:limit]
         except Exception:
             continue
-    # 3. Fallback to static Nitter instances
     for base_url in STATIC_NITTER_INSTANCES:
         try:
             rss = feedparser.parse(f"{base_url}/search/rss?f=tweets&q={query}")
             if rss.entries:
-                return [{"text": e.title, "url": e.link} for e in rss.entries[:limit]]
+                return rss.entries[:limit]
         except Exception:
             continue
     return []
-
-# ---------------------- Part 2: Environment, DB setup, models ----------------------
 
 # --- Load environment ---
 load_dotenv()
@@ -201,13 +197,12 @@ class Portfolio(Base):
     qty = Column(Float)
     price = Column(Float)
 
-# ---------------------- Part 3: Flask endpoints & Telegram command handlers ----------------------
+Base.metadata.create_all(engine)
 
-# --- Flask webhook with logging ---
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
     raw = request.stream.read().decode("utf-8")
-    print(f"Received update: {raw}")  # Debug log
+    print(f"Received update: {raw}")
     try:
         update = Update.de_json(raw)
         bot.process_new_updates([update])
@@ -218,6 +213,16 @@ def telegram_webhook():
 @app.route("/")
 def index():
     return "Bot is alive!", 200
+
+def send_tweet_with_image(chat_id, entry, prefix):
+    text = entry.title
+    url = entry.link
+    image_url = extract_image_url(entry)
+    caption = f"{prefix}\n\n{text}\n{url}"
+    if image_url:
+        bot.send_photo(chat_id, image_url, caption=caption)
+    else:
+        bot.send_message(chat_id, caption)
 
 # --- Telegram command handlers ---
 
@@ -230,32 +235,29 @@ def handle_help(message):
     bot.reply_to(message, (
         "📈 `/price <ticker>` - Get the current price of a stock (e.g., `/price AAPL`)\n"
         "ℹ️ `/info <ticker>` - Get general information about a stock (e.g., `/info MSFT`)\n"
-        "📊 `/chart <ticker> [period] [interval]` - Get a chart for a stock. "
-        "Periods: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max. "
-        "Intervals: 1m, 2m, 5m, 15m, 30m, 60m, 90m, 1h, 1d, 5d, 1wk, 1mo, 3mo. "
-        "Defaults to 1mo period and 1d interval (e.g., `/chart GOOG 6mo 1wk`)\n"
-        "💬 `/sentiment <text>` - Analyze the sentiment of a given text (e.g., `/sentiment The stock market is booming!`)\n"
-        "🐦 `/tweets <query>` - Fetch recent tweets related to a query (e.g., `/tweets Tesla`)\n\n"
+        "📊 `/chart <ticker> [period] [interval]` - Get a chart for a stock.\n"
+        "💬 `/sentiment <text>` - Analyze the sentiment of a given text\n"
+        "🐦 `/tweets <query>` - Fetch recent tweets related to a query\n"
         "--- **NEW COMMANDS** ---\n"
         "➕ `/add @user` - Track Twitter account\n"
         "➖ `/remove @user` - Remove tracked account\n"
         "📋 `/list` - List tracked accounts\n"
         "🧹 `/clear` - Remove all tracked accounts\n"
-        "🗑️ `/cleardb` - Clear all YOUR bot data (DANGEROUS!)\n"
+        "🗑️ `/cleardb` - Clear all YOUR bot data\n"
         "➕ `/addkeyword word` - Track keyword\n"
         "📋 `/listkeywords` - Show tracked keywords\n"
         "➖ `/removekeyword word` - Remove keyword\n"
-        "📈 `/graph TICKER PERIOD [candle|line|rsi]` - Show stock graph (e.g., `/graph AAPL 1y candle`)\n"
-        "🔔 `/alert TICKER <ABOVE|BELOW> <PRICE>` - Set a stock price alert (e.g., `/alert GOOGL ABOVE 150`)\n"
+        "📈 `/graph TICKER PERIOD [candle|line|rsi]` - Show stock graph\n"
+        "🔔 `/alert TICKER <ABOVE|BELOW> <PRICE>` - Set a stock price alert\n"
         "📋 `/listalerts` - List your active stock price alerts\n"
         "❌ `/removealert ID` - Remove a specific price alert by its ID\n"
-        "💰 `/addstock TICKER QUANTITY PRICE` - Add stock to your virtual portfolio (e.g., `/addstock MSFT 10 300.50`)\n"
+        "💰 `/addstock TICKER QUANTITY PRICE` - Add stock to your virtual portfolio\n"
         "🗑️ `/removestock TICKER` - Remove stock from your portfolio\n"
         "📊 `/viewportfolio` - View your virtual stock portfolio performance\n"
         "⏱️ `/setinterval seconds` - Set scan interval (min 60s)\n"
-        "🤫 `/setquiet <start_hour> <end_hour>` - Set quiet hours EST (HH:MM-HH:MM, e.g., `/setquiet 22:00 07:00`)\n"
-        "🗺️ `/settimezone <TimeZoneName>` - Set your local timezone (e.g., `/settimezone Europe/London`). Use standard IANA names.\n"
-        "🗓️ `/setschedule <daily|weekly> <HH:MM>` - Schedule daily/weekly reports (e.g., `/setschedule daily 09:00`)\n"
+        "🤫 `/setquiet <start_hour> <end_hour>` - Set quiet hours EST\n"
+        "🗺️ `/settimezone <TimeZoneName>` - Set your local timezone\n"
+        "🗓️ `/setschedule <daily|weekly> <HH:MM>` - Schedule daily/weekly reports\n"
         "⚙️ `/mysettings` - View your settings\n"
         "🚦 `/status` - Show bot status\n"
         "⏸️ `/pause` - Pause bot\n"
@@ -264,18 +266,11 @@ def handle_help(message):
         "🔊 `/unmute @user` - Unmute user notifications\n"
         "📜 `/last @user` - Show last tweet\n"
         "🔄 `/toggleautoscan` - Toggle auto-scan on/off\n"
-        "🔝 `/top [num] [@user]` - Show top N recent tweets from tracked users or a specific user\n"
-        "🔥 `/trending [num]` - Show top N recent trending hashtags\n"
-        "📤 `/export` - Export tracked accounts and keywords\n"
-        "📥 `/import` - Import tracked accounts and keywords (reply to exported CSV)\n\n"
-        "Need help again? Just type `/help`."
+        "🔝 `/top [num] [@user]` - Show top N recent tweets\n"
+        "🔥 `/trending [num]` - Show top N trending hashtags\n"
+        "📤 `/export` - Export tracked accounts/keywords\n"
+        "📥 `/import` - Import tracked accounts/keywords\n"
     ), parse_mode="Markdown")
-
-# ----------------- (CONTINUED NEXT PART: ALL REMAINING HANDLERS) -----------------
-
-Base.metadata.create_all(engine)
-
-# ---------------------- Part 4: All Telegram command handlers continued ----------------------
 
 @bot.message_handler(commands=['price'])
 def price_handler(message):
@@ -361,12 +356,12 @@ def tweets_handler(message):
     if not query:
         bot.reply_to(message, "🐦 Usage: /tweets <query>")
         return
-    tweets = get_tweets_for_query(query)
-    if not tweets:
+    entries = get_tweets_for_query(query)
+    if not entries:
         bot.reply_to(message, "🐦 No tweets found.")
     else:
-        reply = "\n\n".join([f"🐦 {t['text']}\n{t['url']}" for t in tweets])
-        bot.reply_to(message, reply[:4096])
+        for entry in entries:
+            send_tweet_with_image(message.chat.id, entry, f"🐦 {query}:")
 
 @bot.message_handler(commands=['add'])
 def add_handler(message):
@@ -477,7 +472,7 @@ def listkeywords_handler(message):
 
 @bot.message_handler(commands=['graph'])
 def graph_handler(message):
-    bot.reply_to(message, "📈 Graph command is not implemented yet. Coming soon!")
+    bot.reply_to(message, "📈 Graph command is not yet implemented. Coming soon!")
 
 @bot.message_handler(commands=['alert'])
 def alert_handler(message):
@@ -632,9 +627,9 @@ def last_handler(message):
         bot.reply_to(message, "Usage: /last @username")
         return
     username = args[1][1:]
-    tweet = get_latest_tweet(username)
-    if tweet:
-        bot.reply_to(message, f"🐦 Last tweet from @{username}:\n\n{tweet['text']}\n{tweet['url']}")
+    entry = get_latest_tweet(username)
+    if entry:
+        send_tweet_with_image(message.chat.id, entry, f"🐦 Last tweet from @{username}:")
     else:
         bot.reply_to(message, f"❌ Could not retrieve tweets for @{username}. (Account may be protected, rate-limited, or unavailable.)")
 
@@ -658,38 +653,27 @@ def top_handler(message):
             except ValueError:
                 if args[1].startswith('@'):
                     username = args[1][1:]
-
     session = SessionLocal()
     if username:
         users = session.query(Tracked).filter_by(chat_id=message.chat.id, username=username).all()
     else:
         users = session.query(Tracked).filter_by(chat_id=message.chat.id).all()
     session.close()
-
     if not users:
         bot.reply_to(message, "📋 No Twitter accounts tracked." if not username else f"📋 @{username} is not tracked.")
         return
-
     tweets = []
     for user in users:
         user_tweets = get_twitter_rss(user.username)
         if user_tweets:
-            for entry in user_tweets[:limit]:
-                tweets.append({
-                    "username": user.username,
-                    "title": entry.title,
-                    "link": entry.link,
-                    "published": getattr(entry, "published_parsed", None)
-                })
-
-    tweets = [t for t in tweets if t["published"]]
-    tweets.sort(key=lambda x: x["published"], reverse=True)
-
+            tweets.extend([(user.username, e) for e in user_tweets[:limit]])
+    tweets = [(u, e) for u, e in tweets if hasattr(e, "published_parsed")]
+    tweets.sort(key=lambda x: x[1].published_parsed, reverse=True)
     if not tweets:
-        bot.reply_to(message, "🐦 No recent tweets found for tracked users." if not username else f"🐦 No recent tweets found for @{username}.")
+        bot.reply_to(message, "🐦 No recent tweets found.")
     else:
-        reply = "\n\n".join([f"🐦 @{t['username']}: {t['title']}\n{t['link']}" for t in tweets[:limit]])
-        bot.reply_to(message, reply[:4096])
+        for u, e in tweets[:limit]:
+            send_tweet_with_image(message.chat.id, e, f"🐦 @{u}:")
 
 @bot.message_handler(commands=['trending'])
 def trending_handler(message):
@@ -702,8 +686,6 @@ def export_handler(message):
 @bot.message_handler(commands=['import'])
 def import_handler(message):
     bot.reply_to(message, "📥 Import is not yet implemented. (Will import tracked accounts/keywords from CSV)")
-
-# ---------------------- Part 5: Webhook setup and app run block ----------------------
 
 # --- Set webhook on startup ---
 def set_webhook():
