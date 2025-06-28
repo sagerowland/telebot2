@@ -12,8 +12,6 @@ import feedparser
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
-import mplfinance as mpf
-from textblob import TextBlob
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 # --- Load environment ---
@@ -22,7 +20,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 app = Flask(__name__)
 
 # --- Database setup ---
@@ -57,16 +55,6 @@ class Portfolio(Base):
     ticker = Column(String)
     qty = Column(Float)
     price = Column(Float)
-
-class Settings(Base):
-    __tablename__ = 'settings'
-    chat_id = Column(BigInteger, primary_key=True)
-    interval = Column(Integer, default=300)
-    timezone = Column(String, default='America/New_York')
-    quiet_start = Column(String)
-    quiet_end = Column(String)
-    schedule_type = Column(String)
-    schedule_time = Column(String)
 
 Base.metadata.create_all(engine)
 
@@ -138,7 +126,6 @@ def handle_help(message):
     bot.reply_to(
         message,
         "📚 *Available Commands:*\n"
-        "-----------------------------\n"
         "💲 /price <ticker> - Get stock price\n"
         "ℹ️ /info <ticker> - Stock info\n"
         "📊 /chart <ticker> [period] [interval] - Stock chart\n"
@@ -148,33 +135,15 @@ def handle_help(message):
         "➖ /remove @user - Remove tracked account\n"
         "📋 /list - List tracked accounts\n"
         "🧹 /clear - Remove all tracked accounts\n"
-        "🗑️ /cleardb - Clear all YOUR bot data\n"
         "➕ /addkeyword word - Track keyword\n"
-        "📋 /listkeywords - Show tracked keywords\n"
         "➖ /removekeyword word - Remove keyword\n"
-        "📈 /graph TICKER PERIOD [candle|line|rsi] - Stock graph\n"
+        "📋 /listkeywords - Show tracked keywords\n"
         "🔔 /alert TICKER <ABOVE|BELOW> <PRICE> - Price alert\n"
         "📋 /listalerts - List your alerts\n"
         "❌ /removealert ID - Remove alert\n"
-        "💰 /addstock TICKER QUANTITY PRICE - Add to portfolio\n"
+        "💰 /addstock TICKER QTY PRICE - Add to portfolio\n"
         "🗑️ /removestock TICKER - Remove from portfolio\n"
-        "📊 /viewportfolio - View portfolio\n"
-        "⏱️ /setinterval seconds - Scan interval\n"
-        "🤫 /setquiet <start> <end> - Quiet hours\n"
-        "🗺️ /settimezone <TimeZoneName> - Set timezone\n"
-        "🗓️ /setschedule <daily|weekly> <HH:MM> - Schedule reports\n"
-        "⚙️ /mysettings - View settings\n"
-        "🚦 /status - Bot status\n"
-        "⏸️ /pause - Pause bot\n"
-        "▶️ /resume - Resume bot\n"
-        "🔇 /mute @user - Mute notifications\n"
-        "🔊 /unmute @user - Unmute notifications\n"
-        "📜 /last @user - Last tweet\n"
-        "🔄 /toggleautoscan - Toggle auto-scan\n"
-        "🔝 /top [num] - Top tweets from tracked\n"
-        "🔥 /trending [num] - Trending hashtags\n"
-        "📤 /export - Export accounts/keywords\n"
-        "📥 /import - Import (reply to CSV)\n",
+        "📊 /viewportfolio - View portfolio\n",
         parse_mode="Markdown"
     )
 
@@ -202,7 +171,6 @@ def info_handler(message):
     try:
         data = yf.Ticker(ticker)
         info = data.info
-        # Sometimes info dict is empty if ticker is invalid
         summary = info.get('longBusinessSummary', 'No info available.')
         bot.reply_to(message, f"ℹ️ {ticker} info:\n{summary}")
     except Exception as e:
@@ -262,7 +230,6 @@ def tweets_handler(message):
         reply = "\n\n".join([f"🐦 {t['text']}\n{t['url']}" for t in tweets])
         bot.reply_to(message, reply[:4096])
 
-# --- Twitter tracking ---
 @bot.message_handler(commands=['add'])
 def add_handler(message):
     args = message.text.split()
@@ -315,7 +282,6 @@ def clear_handler(message):
     bot.reply_to(message, f"🧹 Removed {count} tracked Twitter accounts.")
     session.close()
 
-# --- Keyword tracking ---
 @bot.message_handler(commands=['addkeyword'])
 def addkeyword_handler(message):
     args = message.text.split()
@@ -360,7 +326,6 @@ def listkeywords_handler(message):
         bot.reply_to(message, "📋 No keywords tracked.")
     session.close()
 
-# --- Alerts ---
 @bot.message_handler(commands=['alert'])
 def alert_handler(message):
     args = message.text.split()
@@ -415,7 +380,6 @@ def removealert_handler(message):
         bot.reply_to(message, f"❌ No alert with ID {alert_id}.")
     session.close()
 
-# --- Portfolio ---
 @bot.message_handler(commands=['addstock'])
 def addstock_handler(message):
     args = message.text.split()
@@ -468,17 +432,13 @@ def viewportfolio_handler(message):
     bot.reply_to(message, "📊 Your portfolio:\n" + "\n".join(lines) + f"\nTotal invested: ${total:.2f}")
     session.close()
 
-# --- Fallback handler ---
-@bot.message_handler(func=lambda m: True, content_types=['text'])
-def echo_all(message):
-    bot.reply_to(message, "🤖 Unknown command or message. Use /help to see what I can do!")
-
-# --- Set webhook on startup ---
+# --- Set webhook on startup (call on import, not just main) ---
 def set_webhook():
     bot.remove_webhook()
     bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
 
+set_webhook()
+
 if __name__ == "__main__":
-    set_webhook()
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
