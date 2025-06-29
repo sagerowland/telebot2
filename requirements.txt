@@ -15,3 +15,7 @@ psycopg2-binary
 pytz
 beautifulsoup4
 apscheduler
+snscrape
+stanza
+PyYAML
+openpyxl
