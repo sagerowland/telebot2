@@ -916,6 +916,21 @@ def top_handler(message):
         for u, e in tweets[:limit]:
             send_tweet_with_image(message.chat.id, e, f"🐦 @{u}:")
 
+from jim_cramer_inverse import run_cramer_strategy
+
+@bot.message_handler(commands=['cramer'])
+def cramer_handler(message):
+    bot.reply_to(message, "Running Jim Cramer Inverse strategy, please wait... (this may take up to a few minutes)")
+    try:
+        summary = run_cramer_strategy()
+        if len(summary) > 4000:
+            summary = summary[:4000] + "\n[truncated]"
+        bot.send_message(message.chat.id, "Strategy summary:\n" + summary)
+        with open('cramer_nav.png', 'rb') as img:
+            bot.send_photo(message.chat.id, img, caption="📈 Jim Cramer Inverse NAVs")
+    except Exception as e:
+        bot.send_message(message.chat.id, f"❌ Error running Jim Cramer strategy: {e}")
+
 @bot.message_handler(commands=['trending'])
 def trending_handler(message):
     bot.reply_to(message, "🔥 Trending is not yet implemented. (Will show top trending hashtags)")
