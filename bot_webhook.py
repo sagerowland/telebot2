@@ -18,6 +18,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from apscheduler.schedulers.background import BackgroundScheduler
+from jim_cramer_inverse import run_cramer_strategy
 
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
@@ -915,9 +916,7 @@ def top_handler(message):
     else:
         for u, e in tweets[:limit]:
             send_tweet_with_image(message.chat.id, e, f"🐦 @{u}:")
-
-from jim_cramer_inverse import run_cramer_strategy
-
+            
 @bot.message_handler(commands=['cramer'])
 def cramer_handler(message):
     bot.reply_to(message, "Running Jim Cramer Inverse strategy, please wait... (this may take up to a few minutes)")
