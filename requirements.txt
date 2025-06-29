@@ -19,3 +19,5 @@ snscrape
 stanza
 PyYAML
 openpyxl
+twint
+playwright
