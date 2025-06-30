@@ -18,7 +18,6 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from apscheduler.schedulers.background import BackgroundScheduler
-import openai
 
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
@@ -158,7 +157,6 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 app = Flask(__name__)
@@ -834,30 +832,6 @@ def viewportfolio_handler(message):
         total += entry.qty * entry.price
     bot.reply_to(message, "📊 Your portfolio:\n" + "\n".join(lines) + f"\nTotal invested: ${total:.2f}")
     session.close()
-
-client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-@bot.message_handler(commands=['gpt'])
-def gpt_handler(message):
-    prompt = message.text[len('/gpt'):].strip()
-    if not prompt:
-        bot.reply_to(message, "Please provide a prompt after /gpt, e.g. /gpt Tell me a joke.")
-        return
-    try:
-        response = client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=400,
-            temperature=0.7,
-        )
-        reply = response.choices[0].message.content
-        if len(reply) > 4096:
-            for i in range(0, len(reply), 4096):
-                bot.reply_to(message, reply[i:i+4096])
-        else:
-            bot.reply_to(message, reply)
-    except Exception as e:
-        bot.reply_to(message, f"Error with GPT: {e}")
         
 @bot.message_handler(commands=['setinterval'])
 def setinterval_handler(message):
