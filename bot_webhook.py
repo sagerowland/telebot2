@@ -1195,6 +1195,39 @@ def export_handler(message):
 def import_handler(message):
     bot.reply_to(message, "📥 Import is not yet implemented. (Will import tracked accounts/keywords from CSV)")
 
+@bot.message_handler(commands=['menu'])
+def handle_menu(message):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("📈 Price", callback_data="menu_price"),
+        types.InlineKeyboardButton("💼 Portfolio", callback_data="menu_portfolio"),
+        types.InlineKeyboardButton("🐦 Twitter", callback_data="menu_twitter"),
+        types.InlineKeyboardButton("🔍 Keywords", callback_data="menu_keywords"),
+        types.InlineKeyboardButton("🧠 AI Chat", callback_data="menu_ai"),
+        types.InlineKeyboardButton("⚙️ Autoscan", callback_data="menu_autoscan")
+    )
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_menu_callbacks(call):
+    if call.data == "menu_price":
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "📈 Use `/price <TICKER>` to check stock prices.\nExample: `/price AAPL`")
+    elif call.data == "menu_portfolio":
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "💼 Portfolio commands:\n• /addstock\n• /viewportfolio\n• /removestock")
+    elif call.data == "menu_twitter":
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "🐦 Twitter commands:\n• /add @user\n• /list\n• /top\n• /last @user")
+    elif call.data == "menu_keywords":
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "🔍 Keyword tracking:\n• /addkeyword <word>\n• /listkeywords\n• /removekeyword")
+    elif call.data == "menu_ai":
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "🧠 Ask the AI:\nUse `/gemini <your question>`")
+    elif call.data == "menu_autoscan":
+        bot.answer_callback_query(call.id)
+        bot.send_message(call.message.chat.id, "⚙️ Autoscan controls:\n• /pauseautoscan\n• /resumeautoscan\n• /scanmode\n• /myautoscan")
+ 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
