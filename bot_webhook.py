@@ -493,8 +493,7 @@ def handle_start(message):
 
 @bot.message_handler(commands=['help'])
 def handle_help(message):
-    bot.reply_to(message, (
-help_text = """
+    help_text = """
 🤖 *Telegram Bot Commands*
 
 Welcome to your Twitter-scanning, stock-tracking, and AI-powered Telegram bot.
@@ -504,8 +503,14 @@ Welcome to your Twitter-scanning, stock-tracking, and AI-powered Telegram bot.
 📊 *Stock Tools*
 • `/price <TICKER>` — Get the current price of a stock (e.g., `/price TSLA`)
 • `/info <TICKER>` — Company summary and info
+• `/overview <TICKER>` — Detailed company overview (Alpha Vantage)
 • `/chart <TICKER> [PERIOD] [INTERVAL]` — Show price chart (e.g. `1mo`, `1d`)
-• `/graph <TICKER> PERIOD [candle|line|rsi]` — (Coming soon) Advanced charts
+• `/graph <TICKER> [PERIOD] [RSI_PERIOD]` — Advanced candlestick chart with indicators
+• `/news <TICKER>` — Get recent news for a stock
+• `/insider <TICKER>` — Show recent insider trading activity
+
+💰 *Cryptocurrency*
+• `/crypto <SYMBOL>` — Get cryptocurrency price (e.g., `/crypto BTC`)
 
 💼 *Portfolio Tracker*
 • `/addstock <TICKER> <QTY> <PRICE>` — Add stock to your virtual portfolio
@@ -538,27 +543,38 @@ Welcome to your Twitter-scanning, stock-tracking, and AI-powered Telegram bot.
 • `/tweets <query>` — Search recent tweets
 • `/sentiment <text>` — Analyze tone of text
 
-🔄 *Autoscan*
+🔄 *Autoscan Control*
 • `/pause` or `/pauseautoscan` — Pause autoscan
 • `/resume` or `/resumeautoscan` — Resume autoscan
 • `/toggleautoscan` — Toggle scanning on/off
 • `/scanmode all|accounts|keywords` — Choose what gets scanned
-• `/setscandepth <1–20>` — Depth of tweets per item
-• `/myautoscan` — View autoscan setup
+• `/setscandepth <1–20>` — Set depth of tweets per scan
+• `/myautoscan` — View autoscan settings
 
-🧹 *Data Cleanup*
+🧹 *Data Management*
 • `/cleardb` — Erase all tracked data (irreversible)
 
+📱 *Interface*
+• `/menu` — Show interactive button menu
+
 🧪 *Coming Soon*
-• `/setinterval`, `/setquiet`, `/status`, `/setschedule`
-• `/export`, `/import`, `/mute`, `/unmute`, `/trending`, `/mysettings`
+• `/setinterval` — Set scan interval for alerts (min 60s)
+• `/setquiet` — Set quiet hours for notifications
+• `/settimezone` — Set your timezone for reports
+• `/setschedule` — Schedule daily/weekly reports
+• `/mysettings` — View all your settings
+• `/status` — Show bot status
+• `/mute` — Mute notifications temporarily
+• `/unmute` — Unmute notifications
+• `/trending` — Show trending hashtags
+• `/export` — Export tracked accounts/keywords
+• `/import` — Import from CSV
 
 🆘 *General*
-• `/start` — Intro message
+• `/start` — Welcome message
 • `/help` — Show this menu
-• `/menu` — Show interactive button menu
 """
-    ), parse_mode="Markdown")
+    bot.reply_to(message, help_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['overview'])
 def handle_overview(message):
