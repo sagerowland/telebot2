@@ -862,7 +862,7 @@ def handle_gemini(message):
             bot.reply_to(message, f"Gemini error: {str(e)}")
         
 def huggingface_generate(prompt):
-    API_URL = "https://api-inference.huggingface.co/models/gpt2"
+    API_URL = "https://api-inference.huggingface.co/models/distilbert/distilgpt2"
     headers = {"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"}
     payload = {
         "inputs": prompt,
