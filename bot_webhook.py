@@ -858,6 +858,7 @@ def gpt_handler(message):
             bot.reply_to(message, reply)
     except Exception as e:
         bot.reply_to(message, f"Error with GPT: {e}")
+        
 @bot.message_handler(commands=['setinterval'])
 def setinterval_handler(message):
     bot.reply_to(message, "⏱️ Setinterval is not yet implemented. (Will set scan interval for alerts, minimum 60s)")
