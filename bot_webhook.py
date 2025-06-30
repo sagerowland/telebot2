@@ -18,7 +18,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from apscheduler.schedulers.background import BackgroundScheduler
-from google.generativeai import
+from google.generativeai import configure, GenerativeModel
 
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
