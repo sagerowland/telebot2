@@ -841,6 +841,21 @@ def viewportfolio_handler(message):
         total += entry.qty * entry.price
     bot.reply_to(message, "📊 Your portfolio:\n" + "\n".join(lines) + f"\nTotal invested: ${total:.2f}")
     session.close()
+    @bot.message_handler(commands=['ai', 'gpt', 'gemini'])
+def handle_gemini(message):
+    user_input = message.text.partition(" ")[2]  # text after the command
+    if not user_input:
+        bot.reply_to(message, "Please provide a prompt after the command.\nExample: /ai Write me a poem about the ocean.")
+        return
+
+    bot.reply_to(message, "💡 Thinking...")
+
+    try:
+        response = gemini_model.generate_content(user_input)
+        text = response.text.strip()
+        bot.reply_to(message, text)
+    except Exception as e:
+        bot.reply_to(message, f"❌ Error: {e}")
         
 @bot.message_handler(commands=['setinterval'])
 def setinterval_handler(message):
