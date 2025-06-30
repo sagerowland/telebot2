@@ -876,6 +876,11 @@ def huggingface_generate(prompt):
         generated_text = response.json()[0]['generated_text']
         return generated_text
     else:
+        # Print error details for debugging
+        print("Hugging Face API ERROR:")
+        print("Status code:", response.status_code)
+        print("Response body:", response.text)
+        return "⚠️ Hugging Face API error. Try again later.
         return "⚠️ Hugging Face API error. Try again later."
         
 @bot.message_handler(commands=['setinterval'])
