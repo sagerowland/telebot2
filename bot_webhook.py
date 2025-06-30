@@ -165,7 +165,7 @@ if not GEMINI_KEY:
 
 configure(api_key=GEMINI_KEY)
 
-gemini_model = GenerativeModel("gemini-pro")
+gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest")
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
 app = Flask(__name__)
