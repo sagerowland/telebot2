@@ -487,11 +487,6 @@ def set_webhook():
 
 set_webhook()
 
-# --- ALL YOUR ORIGINAL COMMAND HANDLERS BELOW ---
-# (Your full set of @bot.message_handler functions goes here—leave unchanged.)
-
-# ... (all your original handlers, as in your current file) ...
-
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     bot.reply_to(message, "👋 Hello! I'm your finance & news bot.\nType /help to see what I can do.")
@@ -499,130 +494,70 @@ def handle_start(message):
 @bot.message_handler(commands=['help'])
 def handle_help(message):
     bot.reply_to(message, (
-   # 🤖 Telegram Bot Commands
+help_text = """
+🤖 *Telegram Bot Commands*
 
 Welcome to your Twitter-scanning, stock-tracking, and AI-powered Telegram bot.
 
 ---
 
-## 📊 Stock Tools
+📊 *Stock Tools*
+• `/price <TICKER>` — Get the current price of a stock (e.g., `/price TSLA`)
+• `/info <TICKER>` — Company summary and info
+• `/chart <TICKER> [PERIOD] [INTERVAL]` — Show price chart (e.g. `1mo`, `1d`)
+• `/graph <TICKER> PERIOD [candle|line|rsi]` — (Coming soon) Advanced charts
 
-| Command | Description |
-|--------|-------------|
-| `/price <TICKER>` | Get the current price of a stock (e.g., `/price TSLA`) |
-| `/info <TICKER>` | Company summary and info |
-| `/chart <TICKER> [PERIOD] [INTERVAL]` | Show price chart (e.g. `1mo`, `1d`) |
-| `/graph <TICKER> PERIOD [candle|line|rsi]` | (Coming soon) Advanced charts |
+💼 *Portfolio Tracker*
+• `/addstock <TICKER> <QTY> <PRICE>` — Add stock to your virtual portfolio
+• `/removestock <TICKER>` — Remove a stock
+• `/viewportfolio` — Show all holdings and total value
 
----
+🔔 *Price Alerts*
+• `/alert <TICKER> ABOVE|BELOW <PRICE>` — Set a price alert
+• `/listalerts` — View your current alerts
+• `/removealert <ID>` — Delete a specific alert
 
-## 💼 Portfolio Tracker
+🧠 *AI Assistant*
+• `/gemini <prompt>` — Ask anything with AI
+• Aliases: `/ai`, `/gpt`
 
-| Command | Description |
-|---------|-------------|
-| `/addstock <TICKER> <QTY> <PRICE>` | Add a stock to your virtual portfolio |
-| `/removestock <TICKER>` | Remove a stock |
-| `/viewportfolio` | Show all holdings and total value |
+🐦 *Twitter Tracking*
+• `/add @username` — Track a Twitter account
+• `/remove @username` — Untrack a user
+• `/list` — List tracked accounts
+• `/clear` — Clear all tracked accounts
+• `/last @username` — Show their most recent tweet
+• `/top [N] [@username]` — Show top recent tweets
 
----
+🔍 *Keyword Tracking*
+• `/addkeyword <word>` — Track a keyword on Twitter
+• `/removekeyword <word>` — Stop tracking it
+• `/listkeywords` — View tracked keywords
 
-## 🔔 Stock Price Alerts
+💬 *Search & Sentiment*
+• `/tweets <query>` — Search recent tweets
+• `/sentiment <text>` — Analyze tone of text
 
-| Command | Description |
-|---------|-------------|
-| `/alert <TICKER> ABOVE|BELOW <PRICE>` | Trigger an alert at target price |
-| `/listalerts` | View your current alerts |
-| `/removealert <ID>` | Delete a specific alert |
+🔄 *Autoscan*
+• `/pause` or `/pauseautoscan` — Pause autoscan
+• `/resume` or `/resumeautoscan` — Resume autoscan
+• `/toggleautoscan` — Toggle scanning on/off
+• `/scanmode all|accounts|keywords` — Choose what gets scanned
+• `/setscandepth <1–20>` — Depth of tweets per item
+• `/myautoscan` — View autoscan setup
 
----
+🧹 *Data Cleanup*
+• `/cleardb` — Erase all tracked data (irreversible)
 
-## 🧠 AI Assistant
+🧪 *Coming Soon*
+• `/setinterval`, `/setquiet`, `/status`, `/setschedule`
+• `/export`, `/import`, `/mute`, `/unmute`, `/trending`, `/mysettings`
 
-| Command | Description |
-|---------|-------------|
-| `/gemini <prompt>` | Ask questions or get AI-generated answers |
-| Aliases: `/ai`, `/gpt` | Use the same AI engine |
-
----
-
-## 🐦 Twitter Monitoring
-
-| Command | Description |
-|---------|-------------|
-| `/add @username` | Track a Twitter account |
-| `/remove @username` | Untrack an account |
-| `/list` | View tracked Twitter accounts |
-| `/clear` | Remove all tracked accounts |
-| `/last @username` | Show their most recent tweet |
-| `/top [N] [@username]` | Show top N recent tweets (latest first) |
-
----
-
-## 🔍 Keyword Tracking
-
-| Command | Description |
-|---------|-------------|
-| `/addkeyword <word>` | Track a keyword on Twitter |
-| `/removekeyword <word>` | Stop tracking that keyword |
-| `/listkeywords` | List all tracked keywords |
-
----
-
-## 📡 Tweet Search & Sentiment
-
-| Command | Description |
-|---------|-------------|
-| `/tweets <query>` | Search recent tweets |
-| `/sentiment <text>` | Analyze tone (positive/neutral/negative) |
-
----
-
-## 🔄 Autoscan System
-
-| Command | Description |
-|---------|-------------|
-| `/pause` or `/pauseautoscan` | Pause automated tweet scanning |
-| `/resume` or `/resumeautoscan` | Resume scanning |
-| `/toggleautoscan` | Switch autoscan on/off |
-| `/scanmode all|accounts|keywords` | Choose what to scan |
-| `/setscandepth <1-20>` | Set tweet depth per scan |
-| `/myautoscan` | Show your autoscan setup |
-
----
-
-## 🧹 Data Management
-
-| Command | Description |
-|---------|-------------|
-| `/cleardb` | Erase all your data (irreversible) |
-
----
-
-## 🧪 Experimental / Coming Soon
-
-| Command | Description |
-|---------|-------------|
-| `/setinterval` | Set scan rate (min 60 seconds) |
-| `/setquiet <start> <end>` | Set quiet hours |
-| `/settimezone <tz>` | Set local timezone |
-| `/setschedule daily|weekly <HH:MM>` | Schedule updates |
-| `/status` | Show system status |
-| `/mute @username` | Mute alerts for a user |
-| `/unmute @username` | Unmute them |
-| `/trending [N]` | Show trending hashtags |
-| `/export` | Export settings |
-| `/import` | Import settings |
-| `/mysettings` | View all your settings |
-
----
-
-## 🆘 General
-
-| Command | Description |
-|---------|-------------|
-| `/start` | Welcome message |
-| `/help` | Show this help |
-| `/menu` | Quick command menu (if enabled) |
+🆘 *General*
+• `/start` — Intro message
+• `/help` — Show this menu
+• `/menu` — Show interactive button menu
+"""
     ), parse_mode="Markdown")
 
 @bot.message_handler(commands=['overview'])
