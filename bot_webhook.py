@@ -160,9 +160,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 DATABASE_URL = os.getenv("DATABASE_URL")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 GEMINI_KEY = os.getenv("GEMINI_KEY")
-
-if not GEMINI_KEY:
-    raise ValueError("GEMINI_KEY is not set!")
+HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
 
 configure(api_key=GEMINI_KEY)
 
@@ -855,7 +853,6 @@ def handle_gemini(message):
     try:
         response = gemini_model.generate_content(user_input)
         bot.reply_to(message, response.text)
-
     except Exception as e:
         if "429" in str(e):
             bot.reply_to(message, "⚠️ Gemini rate limit reached. Switching to Hugging Face...")
@@ -866,7 +863,7 @@ def handle_gemini(message):
         
 def huggingface_generate(prompt):
     API_URL = "https://api-inference.huggingface.co/models/gpt2"
-    headers = {"Authorization": f"Bearer {os.getenv('HUGGINGFACE_TOKEN')}"}
+    headers = {"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"}
     payload = {
         "inputs": prompt,
         "parameters": {"max_length": 100}
@@ -876,11 +873,9 @@ def huggingface_generate(prompt):
         generated_text = response.json()[0]['generated_text']
         return generated_text
     else:
-        # Print error details for debugging
         print("Hugging Face API ERROR:")
         print("Status code:", response.status_code)
         print("Response body:", response.text)
-        return "⚠️ Hugging Face API error. Try again later.
         return "⚠️ Hugging Face API error. Try again later."
         
 @bot.message_handler(commands=['setinterval'])
