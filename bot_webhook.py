@@ -24,6 +24,10 @@ import os
 import telebot
 from alpha import get_stock_price, get_company_overview
 from finnhub import get_insider_trades, get_crypto_price, get_stock_news
+import mplfinance as mpf
+import matplotlib.dates as mdates
+import sys
+import logging
 
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
@@ -763,7 +767,111 @@ def listkeywords_handler(message):
 
 @bot.message_handler(commands=['graph'])
 def graph_handler(message):
-    bot.reply_to(message, "📈 Graph command is not yet implemented. Coming soon!")
+
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "📈 Usage: /graph <TICKER> [PERIOD] [RSI_PERIOD]")
+        return
+
+    ticker = args[1].upper()
+    period = args[2] if len(args) > 2 else "3mo"
+    rsi_period = int(args[3]) if len(args) > 3 else 14
+
+    valid_periods = [
+        "1d", "5d", "1mo", "3mo", "6mo",
+        "1y", "2y", "5y", "10y", "ytd", "max"
+    ]
+
+    if period not in valid_periods:
+        bot.reply_to(message, f"❌ Invalid period '{period}'. Valid: {', '.join(valid_periods)}")
+        return
+
+    # Try yfinance
+    try:
+        data = yf.Ticker(ticker).history(period=period, interval="1d")
+        if data.empty:
+            raise Exception("No data from yfinance.")
+    except Exception:
+        # Fallback to Alpha Vantage
+        bot.reply_to(message, "🔄 yfinance failed, trying Alpha Vantage...")
+        ALPHA_KEY = os.getenv("ALPHA_VANTAGE_KEY")
+        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={ticker}&apikey={ALPHA_KEY}&outputsize=compact"
+        r = requests.get(url)
+        r.raise_for_status()
+        json_data = r.json()
+        time_series = json_data.get("Time Series (Daily)")
+        if not time_series:
+            bot.reply_to(message, "❌ Alpha Vantage returned no data.")
+            return
+        df = pd.DataFrame.from_dict(time_series, orient="index", dtype=float)
+        df = df.rename(columns={
+            "1. open": "Open",
+            "2. high": "High",
+            "3. low": "Low",
+            "4. close": "Close",
+            "6. volume": "Volume"
+        })
+        df.index = pd.to_datetime(df.index)
+        data = df.sort_index()
+
+    # Calculate moving averages
+    data["SMA20"] = data["Close"].rolling(window=20).mean()
+    data["EMA20"] = data["Close"].ewm(span=20, adjust=False).mean()
+
+    # Calculate Bollinger Bands
+    rolling_mean = data["Close"].rolling(window=20).mean()
+    rolling_std = data["Close"].rolling(window=20).std()
+    data["BB_upper"] = rolling_mean + (2 * rolling_std)
+    data["BB_lower"] = rolling_mean - (2 * rolling_std)
+
+    # Calculate RSI
+    delta = data["Close"].diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(window=rsi_period).mean()
+    avg_loss = loss.rolling(window=rsi_period).mean()
+    rs = avg_gain / avg_loss
+    data["RSI"] = 100 - (100 / (1 + rs))
+
+    # Create additional plots
+    apds = [
+        mpf.make_addplot(data["SMA20"], color='blue', width=1),
+        mpf.make_addplot(data["EMA20"], color='purple', width=1),
+        mpf.make_addplot(data["BB_upper"], color='grey', linestyle='--'),
+        mpf.make_addplot(data["BB_lower"], color='grey', linestyle='--'),
+    ]
+
+    # Create candlestick & volume figure
+    fig, axes = mpf.plot(
+        data,
+        type='candle',
+        volume=True,
+        addplot=apds,
+        returnfig=True,
+        figsize=(12,8),
+        style='yahoo',
+        title=f"{ticker} Price, SMA, EMA, BB, Volume"
+    )
+
+    # RSI subplot below
+    ax_rsi = fig.add_axes([0.1, 0.05, 0.8, 0.2])
+    ax_rsi.plot(data.index, data["RSI"], label=f'RSI ({rsi_period})', color='orange')
+    ax_rsi.axhline(70, color='red', linestyle='--')
+    ax_rsi.axhline(30, color='green', linestyle='--')
+    ax_rsi.set_ylim(0, 100)
+    ax_rsi.set_ylabel("RSI")
+    ax_rsi.grid(True)
+    ax_rsi.legend()
+
+    # Save figure to buffer
+    buf = io.BytesIO()
+    plt.tight_layout()
+    fig.savefig(buf, format="png")
+    buf.seek(0)
+    plt.close(fig)
+
+    bot.send_photo(message.chat.id, buf, caption=f"📈 {ticker} Candlestick Chart with SMA, EMA, Bollinger Bands, Volume, RSI ({rsi_period})")
+
 
 @bot.message_handler(commands=['alert'])
 def alert_handler(message):
