@@ -842,6 +842,7 @@ def viewportfolio_handler(message):
         total += entry.qty * entry.price
     bot.reply_to(message, "📊 Your portfolio:\n" + "\n".join(lines) + f"\nTotal invested: ${total:.2f}")
     session.close()
+    
 @bot.message_handler(commands=['ai', 'gpt', 'gemini'])
 def handle_gemini(message):
     user_input = message.text.partition(" ")[2]  # text after the command
@@ -861,6 +862,20 @@ def handle_gemini(message):
         bot.reply_to(message, text)
     except Exception as e:
         bot.reply_to(message, f"❌ Error: {e}")
+        
+def huggingface_generate(prompt):
+    API_URL = "https://api-inference.huggingface.co/models/gpt2"
+    headers = {"Authorization": f"Bearer {os.getenv('HUGGINGFACE_TOKEN')}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {"max_length": 100}
+    }
+    response = requests.post(API_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        generated_text = response.json()[0]['generated_text']
+        return generated_text
+    else:
+        return "⚠️ Hugging Face API error. Try again later."
         
 @bot.message_handler(commands=['setinterval'])
 def setinterval_handler(message):
