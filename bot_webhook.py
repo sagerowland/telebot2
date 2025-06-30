@@ -499,46 +499,130 @@ def handle_start(message):
 @bot.message_handler(commands=['help'])
 def handle_help(message):
     bot.reply_to(message, (
-        "📈 `/price <ticker>` - Get the current price of a stock (e.g., `/price AAPL`)\n"
-        "ℹ️ `/info <ticker>` - Get general information about a stock (e.g., `/info MSFT`)\n"
-        "📊 `/chart <ticker> [period] [interval]` - Get a chart for a stock.\n"
-        "💬 `/sentiment <text>` - Analyze the sentiment of a given text\n"
-        "🐦 `/tweets <query>` - Fetch recent tweets related to a query\n"
-        "➕ `/add @user` - Track Twitter account\n"
-        "➖ `/remove @user` - Remove tracked account\n"
-        "📋 `/list` - List tracked accounts\n"
-        "🧹 `/clear` - Remove all tracked accounts\n"
-        "🗑️ `/cleardb` - Clear all YOUR bot data\n"
-        "➕ `/addkeyword word` - Track keyword\n"
-        "📋 `/listkeywords` - Show tracked keywords\n"
-        "➖ `/removekeyword word` - Remove keyword\n"
-        "📈 `/graph TICKER PERIOD [candle|line|rsi]` - Show stock graph\n"
-        "🔔 `/alert TICKER <ABOVE|BELOW> <PRICE>` - Set a stock price alert\n"
-        "📋 `/listalerts` - List your active stock price alerts\n"
-        "❌ `/removealert ID` - Remove a specific price alert by its ID\n"
-        "💰 `/addstock TICKER QUANTITY PRICE` - Add stock to your virtual portfolio\n"
-        "🗑️ `/removestock TICKER` - Remove stock from your portfolio\n"
-        "📊 `/viewportfolio` - View your virtual stock portfolio performance\n"
-        "⏱️ `/setinterval seconds` - Set scan interval (min 60s)\n"
-        "🤫 `/setquiet <start_hour> <end_hour>` - Set quiet hours EST\n"
-        "🗺️ `/settimezone <TimeZoneName>` - Set your local timezone\n"
-        "🗓️ `/setschedule <daily|weekly> <HH:MM>` - Schedule daily/weekly reports\n"
-        "⚙️ `/mysettings` - View your settings\n"
-        "🚦 `/status` - Show bot status\n"
-        "🔇 `/mute @user` - Mute user notifications\n"
-        "🔊 `/unmute @user` - Unmute user notifications\n"
-        "📜 `/last @user` - Show last tweet\n"
-        "🔝 `/top [num] [@user]` - Show top N recent tweets\n"
-        "🔥 `/trending [num]` - Show top N trending hashtags\n"
-        "📤 `/export` - Export tracked accounts/keywords\n"
-        "📥 `/import` - Import tracked accounts/keywords\n"
-        "--- **AUTOSCAN COMMANDS** ---\n"
-        "⏸️ `/pause` or `/pauseautoscan` - Pause autoscan for this chat\n"
-        "▶️ `/resume` or `/resumeautoscan` - Resume autoscan for this chat\n"
-        "🔄 `/toggleautoscan` - Toggle autoscan pause/resume for this chat\n"
-        "🛠️ `/scanmode <all|accounts|keywords>` - Set scan mode (all/accounts/keywords)\n"
-        "🔢 `/setscandepth <number_of_tweets>` - Set how many tweets to scan for each tracked account/keyword\n"
-        "⚙️ `/myautoscan` - Show your current autoscan settings\n"
+   # 🤖 Telegram Bot Commands
+
+Welcome to your Twitter-scanning, stock-tracking, and AI-powered Telegram bot.
+
+---
+
+## 📊 Stock Tools
+
+| Command | Description |
+|--------|-------------|
+| `/price <TICKER>` | Get the current price of a stock (e.g., `/price TSLA`) |
+| `/info <TICKER>` | Company summary and info |
+| `/chart <TICKER> [PERIOD] [INTERVAL]` | Show price chart (e.g. `1mo`, `1d`) |
+| `/graph <TICKER> PERIOD [candle|line|rsi]` | (Coming soon) Advanced charts |
+
+---
+
+## 💼 Portfolio Tracker
+
+| Command | Description |
+|---------|-------------|
+| `/addstock <TICKER> <QTY> <PRICE>` | Add a stock to your virtual portfolio |
+| `/removestock <TICKER>` | Remove a stock |
+| `/viewportfolio` | Show all holdings and total value |
+
+---
+
+## 🔔 Stock Price Alerts
+
+| Command | Description |
+|---------|-------------|
+| `/alert <TICKER> ABOVE|BELOW <PRICE>` | Trigger an alert at target price |
+| `/listalerts` | View your current alerts |
+| `/removealert <ID>` | Delete a specific alert |
+
+---
+
+## 🧠 AI Assistant
+
+| Command | Description |
+|---------|-------------|
+| `/gemini <prompt>` | Ask questions or get AI-generated answers |
+| Aliases: `/ai`, `/gpt` | Use the same AI engine |
+
+---
+
+## 🐦 Twitter Monitoring
+
+| Command | Description |
+|---------|-------------|
+| `/add @username` | Track a Twitter account |
+| `/remove @username` | Untrack an account |
+| `/list` | View tracked Twitter accounts |
+| `/clear` | Remove all tracked accounts |
+| `/last @username` | Show their most recent tweet |
+| `/top [N] [@username]` | Show top N recent tweets (latest first) |
+
+---
+
+## 🔍 Keyword Tracking
+
+| Command | Description |
+|---------|-------------|
+| `/addkeyword <word>` | Track a keyword on Twitter |
+| `/removekeyword <word>` | Stop tracking that keyword |
+| `/listkeywords` | List all tracked keywords |
+
+---
+
+## 📡 Tweet Search & Sentiment
+
+| Command | Description |
+|---------|-------------|
+| `/tweets <query>` | Search recent tweets |
+| `/sentiment <text>` | Analyze tone (positive/neutral/negative) |
+
+---
+
+## 🔄 Autoscan System
+
+| Command | Description |
+|---------|-------------|
+| `/pause` or `/pauseautoscan` | Pause automated tweet scanning |
+| `/resume` or `/resumeautoscan` | Resume scanning |
+| `/toggleautoscan` | Switch autoscan on/off |
+| `/scanmode all|accounts|keywords` | Choose what to scan |
+| `/setscandepth <1-20>` | Set tweet depth per scan |
+| `/myautoscan` | Show your autoscan setup |
+
+---
+
+## 🧹 Data Management
+
+| Command | Description |
+|---------|-------------|
+| `/cleardb` | Erase all your data (irreversible) |
+
+---
+
+## 🧪 Experimental / Coming Soon
+
+| Command | Description |
+|---------|-------------|
+| `/setinterval` | Set scan rate (min 60 seconds) |
+| `/setquiet <start> <end>` | Set quiet hours |
+| `/settimezone <tz>` | Set local timezone |
+| `/setschedule daily|weekly <HH:MM>` | Schedule updates |
+| `/status` | Show system status |
+| `/mute @username` | Mute alerts for a user |
+| `/unmute @username` | Unmute them |
+| `/trending [N]` | Show trending hashtags |
+| `/export` | Export settings |
+| `/import` | Import settings |
+| `/mysettings` | View all your settings |
+
+---
+
+## 🆘 General
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message |
+| `/help` | Show this help |
+| `/menu` | Quick command menu (if enabled) |
     ), parse_mode="Markdown")
 
 @bot.message_handler(commands=['overview'])
