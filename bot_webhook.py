@@ -835,8 +835,7 @@ def viewportfolio_handler(message):
     bot.reply_to(message, "📊 Your portfolio:\n" + "\n".join(lines) + f"\nTotal invested: ${total:.2f}")
     session.close()
 
-
-openai.api_key = OPENAI_API_KEY
+client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 @bot.message_handler(commands=['gpt'])
 def gpt_handler(message):
@@ -845,17 +844,20 @@ def gpt_handler(message):
         bot.reply_to(message, "Please provide a prompt after /gpt, e.g. /gpt Tell me a joke.")
         return
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=400,
             temperature=0.7,
         )
-        reply = response['choices'][0]['message']['content']
-        bot.reply_to(message, reply)
+        reply = response.choices[0].message.content
+        if len(reply) > 4096:
+            for i in range(0, len(reply), 4096):
+                bot.reply_to(message, reply[i:i+4096])
+        else:
+            bot.reply_to(message, reply)
     except Exception as e:
         bot.reply_to(message, f"Error with GPT: {e}")
-
 @bot.message_handler(commands=['setinterval'])
 def setinterval_handler(message):
     bot.reply_to(message, "⏱️ Setinterval is not yet implemented. (Will set scan interval for alerts, minimum 60s)")
