@@ -850,7 +850,7 @@ def handle_gemini(message):
         bot.reply_to(message, "Please provide a prompt after /gemini.")
         return
 
-    bot.reply_to(message, "💡 Thinking with Gemini...")
+    bot.reply_to(message, "💡 Thinking...")
 
     try:
         response = gemini_model.generate_content(user_input)
