@@ -20,6 +20,10 @@ from bs4 import BeautifulSoup
 from apscheduler.schedulers.background import BackgroundScheduler
 import google.generativeai as genai
 from google.generativeai import configure, GenerativeModel
+import os
+import telebot
+from alpha import get_stock_price, get_company_overview
+from finnhub import get_insider_trades, get_crypto_price, get_stock_news
 
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
@@ -532,6 +536,32 @@ def handle_help(message):
         "🔢 `/setscandepth <number_of_tweets>` - Set how many tweets to scan for each tracked account/keyword\n"
         "⚙️ `/myautoscan` - Show your current autoscan settings\n"
     ), parse_mode="Markdown")
+
+@bot.message_handler(commands=['overview'])
+def handle_overview(message):
+    parts = message.text.split()
+    symbol = parts[1] if len(parts) > 1 else "AAPL"
+    bot.send_message(message.chat.id, get_company_overview(symbol))
+
+@bot.message_handler(commands=['insider'])
+def handle_insider(message):
+    parts = message.text.split()
+    symbol = parts[1] if len(parts) > 1 else "AAPL"
+    for msg in get_insider_trades(symbol):
+        bot.send_message(message.chat.id, msg)
+
+@bot.message_handler(commands=['crypto'])
+def handle_crypto(message):
+    parts = message.text.split()
+    symbol = parts[1] if len(parts) > 1 else "BTC"
+    bot.send_message(message.chat.id, get_crypto_price(symbol))
+
+@bot.message_handler(commands=['news'])
+def handle_news(message):
+    parts = message.text.split()
+    symbol = parts[1] if len(parts) > 1 else "AAPL"
+    for msg in get_stock_news(symbol):
+        bot.send_message(message.chat.id, msg)
 
 @bot.message_handler(commands=['price'])
 def price_handler(message):
