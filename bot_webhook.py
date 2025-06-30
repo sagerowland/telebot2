@@ -845,23 +845,24 @@ def viewportfolio_handler(message):
     
 @bot.message_handler(commands=['ai', 'gpt', 'gemini'])
 def handle_gemini(message):
-    user_input = message.text.partition(" ")[2]  # text after the command
-
+    user_input = message.text.partition(" ")[2]
     if not user_input:
-        bot.reply_to(
-            message,
-            "Please provide a prompt after the command.\nExample: /ai Write me a poem about the ocean."
-        )
+        bot.reply_to(message, "Please provide a prompt after /gemini.")
         return
 
-    bot.reply_to(message, "💡 Thinking...")
+    bot.reply_to(message, "💡 Thinking with Gemini...")
 
     try:
         response = gemini_model.generate_content(user_input)
-        text = response.text.strip()
-        bot.reply_to(message, text)
+        bot.reply_to(message, response.text)
+
     except Exception as e:
-        bot.reply_to(message, f"❌ Error: {e}")
+        if "429" in str(e):
+            bot.reply_to(message, "⚠️ Gemini rate limit reached. Switching to Hugging Face...")
+            hf_output = huggingface_generate(user_input)
+            bot.reply_to(message, hf_output)
+        else:
+            bot.reply_to(message, f"Gemini error: {str(e)}")
         
 def huggingface_generate(prompt):
     API_URL = "https://api-inference.huggingface.co/models/gpt2"
