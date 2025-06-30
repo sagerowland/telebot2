@@ -18,6 +18,7 @@ import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
 from apscheduler.schedulers.background import BackgroundScheduler
+import openai
 
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
@@ -832,6 +833,28 @@ def viewportfolio_handler(message):
         total += entry.qty * entry.price
     bot.reply_to(message, "📊 Your portfolio:\n" + "\n".join(lines) + f"\nTotal invested: ${total:.2f}")
     session.close()
+
+import openai
+
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+@bot.message_handler(commands=['gpt'])
+def gpt_handler(message):
+    prompt = message.text[len('/gpt'):].strip()
+    if not prompt:
+        bot.reply_to(message, "Please provide a prompt after /gpt, e.g. /gpt Tell me a joke.")
+        return
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=400,
+            temperature=0.7,
+        )
+        reply = response['choices'][0]['message']['content']
+        bot.reply_to(message, reply)
+    except Exception as e:
+        bot.reply_to(message, f"Error with GPT: {e}")
 
 @bot.message_handler(commands=['setinterval'])
 def setinterval_handler(message):
