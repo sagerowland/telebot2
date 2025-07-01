@@ -34,8 +34,8 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import re
 from sqlalchemy import Column, Integer, DateTime
-class RateLimiter:
 
+class RateLimiter:
     def __init__(self):
         from collections import defaultdict
         self.user_limits = defaultdict(list)
@@ -64,6 +64,7 @@ EXTRA_INSTANCES = [
     "https://nitter.kareem.one",
     "https://nuku.trabun.org"
 ]
+
 STATIC_NITTER_INSTANCES = [
     "https://nitter.net",
     "https://nitter.privacydev.net",
@@ -264,29 +265,11 @@ class LastSeenKeyword(Base):
     keyword = Column(String)
     tweet_id = Column(String)
     __table_args__ = (UniqueConstraint('chat_id', 'keyword', name='uq_keyword_chat'),)
-    # Add these lines after your last model class but before Base.metadata.create_all(engine)
 
 class ProcessedUpdate(Base):
     __tablename__ = 'processed_updates'
     update_id = Column(Integer, primary_key=True)
     processed_at = Column(DateTime, default=datetime.utcnow)
-
-class RateLimiter:
-    def __init__(self):
-        from collections import defaultdict
-        self.user_limits = defaultdict(list)
-    
-    def check_limit(self, user_id, limit=3, period=60):
-        from datetime import datetime, timedelta
-        now = datetime.now()
-        self.user_limits[user_id] = [
-            t for t in self.user_limits[user_id] 
-            if now - t < timedelta(seconds=period)
-        ]
-        if len(self.user_limits[user_id]) >= limit:
-            return False
-        self.user_limits[user_id].append(now)
-        return True
 
 Base.metadata.create_all(engine)
 
@@ -329,7 +312,7 @@ def send_tweet_with_image(chat_id, entry, prefix):
         print(f"Error sending tweet: {e}")
         # Fallback to minimal message
         bot.send_message(chat_id, f"{prefix}\n{entry.link.split('#')[0]}")
-        
+
 # --- AUTOSCAN CONTROL COMMANDS ---
 def pause_autoscan_handler(message):
     session = SessionLocal()
@@ -873,7 +856,6 @@ def listkeywords_handler(message):
 
 @bot.message_handler(commands=['graph'])
 def graph_handler(message):
-
     args = message.text.split()
     if len(args) < 2:
         bot.reply_to(message, "📈 Usage: /graph <TICKER> [PERIOD] [RSI_PERIOD]")
@@ -1231,21 +1213,6 @@ def import_handler(message):
 def handle_menu(message):
     try:
         markup = types.InlineKeyboardMarkup(row_width=2)
-        # ... rest of menu code ...
-    except NameError:
-        bot.reply_to(message, "⚠️ Bot configuration error. Please notify the admin.")
-        print("ERROR: 'types' not imported from telebot")
-        types.InlineKeyboardButton("📈 Price", callback_data="menu_price"),
-        types.InlineKeyboardButton("💼 Portfolio", callback_data="menu_portfolio"),
-        types.InlineKeyboardButton("🐦 Twitter", callback_data="menu_twitter"),
-        types.InlineKeyboardButton("🔍 Keywords", callback_data="menu_keywords"),
-        types.InlineKeyboardButton("🧠 AI Chat", callback_data="menu_ai"),
-        types.InlineKeyboardButton("⚙️ Autoscan", callback_data="menu_autoscan")
-
-@bot.message_handler(commands=['menu'])
-def handle_menu(message):
-    try:
-        markup = types.InlineKeyboardMarkup(row_width=2)
         markup.add(
             types.InlineKeyboardButton("📈 Price", callback_data="menu_price"),
             types.InlineKeyboardButton("💼 Portfolio", callback_data="menu_portfolio"),
@@ -1276,7 +1243,7 @@ def handle_menu_callbacks(call):
     elif call.data == "menu_ai":
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "🧠 Ask the AI:\nUse `/gemini <your question>`")
-    elif call.data == "menu_autoscan":  # Fixed incomplete block
+    elif call.data == "menu_autoscan":
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "⚙️ Autoscan commands:\n• /pauseautoscan\n• /resumeautoscan\n• /myautoscan")
  
