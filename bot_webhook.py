@@ -413,6 +413,7 @@ def autoscan():
             continue
 
         try:
+            # Account autoscan
             if scan_accounts:
                 users = session.query(Tracked).filter_by(chat_id=chat_id).all()
                 for user in users:
@@ -444,8 +445,42 @@ def autoscan():
                             session.commit()
                         except Exception as e:
                             print(f"Error sending tweet for @{user.username} to chat {chat_id}: {e}")
+
+            # Keyword autoscan
+            if scan_keywords:
+                keywords = session.query(Keyword).filter_by(chat_id=chat_id).all()
+                for kw in keywords:
+                    if sent_count >= RATE_LIMIT_PER_RUN:
+                        print("Rate limit reached. Pausing autoscan for this run.")
+                        session.close()
+                        return
+                    tweets = get_tweets_for_query(kw.keyword, limit=scan_depth)
+                    if not tweets:
+                        continue
+                    last_seen = session.query(LastSeenKeyword).filter_by(chat_id=chat_id, keyword=kw.keyword).first()
+                    new_tweets = []
+                    for entry in tweets:
+                        tweet_id = getattr(entry, "id", None) or entry.link
+                        if last_seen and tweet_id == last_seen.tweet_id:
+                            break
+                        new_tweets.append((tweet_id, entry))
+                    for tweet_id, entry in reversed(new_tweets):
+                        try:
+                            send_tweet_with_image(chat_id, entry, f"🍀 Autoscan keyword '{kw.keyword}':")
+                            sent_count += 1
+                            # Always update last_seen after sending
+                            if last_seen:
+                                last_seen.tweet_id = tweet_id
+                            else:
+                                last_seen = LastSeenKeyword(chat_id=chat_id, keyword=kw.keyword, tweet_id=tweet_id)
+                                session.add(last_seen)
+                            session.commit()
+                        except Exception as e:
+                            print(f"Error sending keyword '{kw.keyword}' in chat {chat_id}: {e}")
+
+        except Exception as e:
+            print(f"Error scanning chat {chat_id}: {e}")
     session.close()
-    
                         return
                     tweets = get_tweets_for_query(kw.keyword, limit=scan_depth)
                     if not tweets:
