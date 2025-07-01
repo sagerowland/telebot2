@@ -290,18 +290,22 @@ def index():
     return "Bot is alive!", 200
 
 def send_tweet_with_image(chat_id, entry, prefix):
-    text = entry.title
-    url = entry.link
-    image_url = extract_image_url(entry)
-    caption = f"{prefix}\n\n{text}\n{url}"
     try:
-        if image_url:
-            bot.send_photo(chat_id, image_url, caption=caption)
+        clean_text = clean_tweet_text(entry.title)
+        # Extract base URL without parameters
+        clean_url = entry.link.split('#')[0].split('?')[0]
+        
+        caption = f"{prefix}\n\n{clean_text}\n\n🔗 {clean_url}"
+        
+        if hasattr(entry, 'media_content') and entry.media_content:
+            bot.send_photo(chat_id, entry.media_content[0]['url'], caption=caption)
         else:
             bot.send_message(chat_id, caption)
     except Exception as e:
-        print(f"Error sending message to chat {chat_id}: {e}")
-
+        print(f"Error sending tweet: {e}")
+        # Fallback to minimal message
+        bot.send_message(chat_id, f"{prefix}\n{entry.link.split('#')[0]}")
+        
 # --- AUTOSCAN CONTROL COMMANDS ---
 def pause_autoscan_handler(message):
     session = SessionLocal()
