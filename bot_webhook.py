@@ -648,6 +648,9 @@ def handle_news(message):
 
 @bot.message_handler(commands=['price'])
 def price_handler(message):
+    if not limiter.check_limit(message.from_user.id):
+        return  # Silent ignore for rate limits
+    
     args = message.text.split()
     if len(args) < 2:
         bot.reply_to(message, "💲 Usage: /price <TICKER>")
