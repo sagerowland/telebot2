@@ -34,6 +34,24 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import re
 
+class RateLimiter:
+    def __init__(self):
+        from collections import defaultdict
+        self.user_limits = defaultdict(list)
+    
+    def check_limit(self, user_id, limit=3, period=60):
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        # Clear old timestamps
+        self.user_limits[user_id] = [
+            t for t in self.user_limits[user_id] 
+            if now - t < timedelta(seconds=period)
+        ]
+        if len(self.user_limits[user_id]) >= limit:
+            return False
+        self.user_limits[user_id].append(now)
+        return True
+
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
     "https://xcancel.com",
