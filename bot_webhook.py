@@ -250,13 +250,21 @@ Base.metadata.create_all(engine)
 
 @app.route(f"/{BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
-    raw = request.stream.read().decode("utf-8")
-    print(f"Received update: {raw}")
-    try:
-        update = Update.de_json(raw)
-        bot.process_new_updates([update])
-    except Exception as e:
-        print(f"Error processing update: {e}")
+    if not request.is_json:
+        return "Invalid content", 400
+        
+    with update_lock:
+        update = Update.de_json(request.get_json())
+        session = SessionLocal()
+        try:
+            if session.query(ProcessedUpdate).filter_by(update_id=update.update_id).first():
+                return "OK", 200
+                
+            bot.process_new_updates([update])
+            session.add(ProcessedUpdate(update_id=update.update_id))
+            session.commit()
+        finally:
+            session.close()
     return "OK", 200
 
 @app.route("/")
@@ -921,6 +929,14 @@ def graph_handler(message):
 
     bot.send_photo(message.chat.id, buf, caption=f"📈 {ticker} Candlestick Chart with SMA, EMA, Bollinger Bands, Volume, RSI ({rsi_period})")
 
+def send_clean_tweet(chat_id, entry, username):
+    clean_text = re.sub(r'R to @\w+:|http\S+', '', entry.title).strip()
+    caption = f"🍀 @{username}\n\n{clean_text}\n\n🔗 {entry.link}"
+    
+    if hasattr(entry, 'media_content'):
+        bot.send_photo(chat_id, entry.media_content[0]['url'], caption=caption)
+    else:
+        bot.send_message(chat_id, caption)
 
 @bot.message_handler(commands=['alert'])
 def alert_handler(message):
