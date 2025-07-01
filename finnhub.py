@@ -39,4 +39,15 @@ def get_crypto_price(symbol="BTC"):
     
     return f"❌ Could not fetch {symbol} price"
 
-# ... (keep your existing get_insider_trades() and get_stock_news() functions)
+def get_insider_trades(symbol):
+    if not FINNHUB_API_KEY:
+        return ["❌ Finnhub API key not set"]
+    try:
+        url = f"https://finnhub.io/api/v1/stock/insider-transactions?symbol={symbol}&token={FINNHUB_API_KEY}"
+        res = requests.get(url).json()
+        trades = res.get("data", [])
+        if not trades:
+            return [f"❌ No insider trades for {symbol}"]
+        return [f"📈 {trade['name']} bought {trade['share']} shares" for trade in trades[:3]]
+    except Exception as e:
+        return [f"❌ Error fetching insider trades: {str(e)}"]
