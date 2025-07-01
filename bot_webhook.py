@@ -1160,6 +1160,8 @@ def handle_menu(message):
         types.InlineKeyboardButton("🧠 AI Chat", callback_data="menu_ai"),
         types.InlineKeyboardButton("⚙️ Autoscan", callback_data="menu_autoscan")
     )
+    bot.send_message(message.chat.id, "Choose an option:", reply_markup=markup)
+    )
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_menu_callbacks(call):
