@@ -29,6 +29,10 @@ import matplotlib.dates as mdates
 import sys
 import logging
 from telebot import types
+from threading import Lock
+from datetime import datetime, timedelta
+from collections import defaultdict
+import re
 
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
