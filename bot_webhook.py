@@ -399,6 +399,7 @@ def autoscan():
     RATE_LIMIT_PER_RUN = 30
     sent_count = 0
 
+    # Get all unique chat IDs that have tracked accounts or keywords
     all_chats = set(
         [r[0] for r in session.query(Tracked.chat_id).distinct()] +
         [r[0] for r in session.query(Keyword.chat_id).distinct()]
@@ -477,33 +478,6 @@ def autoscan():
                             session.commit()
                         except Exception as e:
                             print(f"Error sending keyword '{kw.keyword}' in chat {chat_id}: {e}")
-
-        except Exception as e:
-            print(f"Error scanning chat {chat_id}: {e}")
-    session.close()
-                        return
-                    tweets = get_tweets_for_query(kw.keyword, limit=scan_depth)
-                    if not tweets:
-                        continue
-                    last_seen = session.query(LastSeenKeyword).filter_by(chat_id=chat_id, keyword=kw.keyword).first()
-                    new_tweets = []
-                    for entry in tweets:
-                        tweet_id = getattr(entry, "id", None) or entry.link
-                        if last_seen and tweet_id == last_seen.tweet_id:
-                            break
-                        new_tweets.append((tweet_id, entry))
-                    for tweet_id, entry in reversed(new_tweets):
-                        try:
-                            send_tweet_with_image(chat_id, entry, f"🍀 Autoscan keyword '{kw.keyword}':")
-                            sent_count += 1
-                        except Exception as e:
-                            print(f"Error sending keyword '{kw.keyword}' in chat {chat_id}: {e}")
-                        if not last_seen:
-                            last_seen = LastSeenKeyword(chat_id=chat_id, keyword=kw.keyword, tweet_id=tweet_id)
-                            session.add(last_seen)
-                        else:
-                            last_seen.tweet_id = tweet_id
-                        session.commit()
         except Exception as e:
             print(f"Error scanning chat {chat_id}: {e}")
     session.close()
