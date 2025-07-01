@@ -28,6 +28,7 @@ import mplfinance as mpf
 import matplotlib.dates as mdates
 import sys
 import logging
+from telebot import types
 
 # --- Nitter instance discovery and fallback logic ---
 EXTRA_INSTANCES = [
@@ -1155,16 +1156,36 @@ def import_handler(message):
 
 @bot.message_handler(commands=['menu'])
 def handle_menu(message):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
+    try:
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        # ... rest of menu code ...
+    except NameError:
+        bot.reply_to(message, "⚠️ Bot configuration error. Please notify the admin.")
+        print("ERROR: 'types' not imported from telebot")
         types.InlineKeyboardButton("📈 Price", callback_data="menu_price"),
         types.InlineKeyboardButton("💼 Portfolio", callback_data="menu_portfolio"),
         types.InlineKeyboardButton("🐦 Twitter", callback_data="menu_twitter"),
         types.InlineKeyboardButton("🔍 Keywords", callback_data="menu_keywords"),
         types.InlineKeyboardButton("🧠 AI Chat", callback_data="menu_ai"),
         types.InlineKeyboardButton("⚙️ Autoscan", callback_data="menu_autoscan")
-    )
-    bot.send_message(message.chat.id, "Choose an option:", reply_markup=markup)  
+from telebot import types  # MUST BE AT TOP OF FILE
+
+@bot.message_handler(commands=['menu'])
+def handle_menu(message):
+    try:
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        markup.add(
+            types.InlineKeyboardButton("📈 Price", callback_data="menu_price"),
+            types.InlineKeyboardButton("💼 Portfolio", callback_data="menu_portfolio"),
+            types.InlineKeyboardButton("🐦 Twitter", callback_data="menu_twitter"),
+            types.InlineKeyboardButton("🔍 Keywords", callback_data="menu_keywords"),
+            types.InlineKeyboardButton("🧠 AI Chat", callback_data="menu_ai"),
+            types.InlineKeyboardButton("⚙️ Autoscan", callback_data="menu_autoscan")
+        )
+        bot.send_message(message.chat.id, "Choose an option:", reply_markup=markup)
+    except Exception as e:  # Catch all errors, not just NameError
+        bot.reply_to(message, "⚠️ Menu failed to load. Please try again.")
+        print(f"Menu Error: {str(e)}")
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_menu_callbacks(call):
