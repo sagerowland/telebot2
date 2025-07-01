@@ -180,6 +180,8 @@ configure(api_key=GEMINI_KEY)
 gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest")
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
+update_lock = Lock()
+limiter = RateLimiter()
 app = Flask(__name__)
 
 # --- Database setup ---
@@ -1172,7 +1174,6 @@ def handle_menu(message):
         types.InlineKeyboardButton("🔍 Keywords", callback_data="menu_keywords"),
         types.InlineKeyboardButton("🧠 AI Chat", callback_data="menu_ai"),
         types.InlineKeyboardButton("⚙️ Autoscan", callback_data="menu_autoscan")
-from telebot import types  # MUST BE AT TOP OF FILE
 
 @bot.message_handler(commands=['menu'])
 def handle_menu(message):
