@@ -430,24 +430,27 @@ def autoscan():
                         if last_seen and tweet_id == last_seen.tweet_id:
                             break
                         new_tweets.append((tweet_id, entry))
+                    # Send from oldest to newest
                     for tweet_id, entry in reversed(new_tweets):
                         try:
                             send_tweet_with_image(chat_id, entry, f"🍀 Autoscan @{user.username}:")
                             sent_count += 1
+                            # Always update last_seen after sending
+                            if last_seen:
+                                last_seen.tweet_id = tweet_id
+                            else:
+                                last_seen = LastSeenUser(chat_id=chat_id, username=user.username, tweet_id=tweet_id)
+                                session.add(last_seen)
+                            session.commit()
                         except Exception as e:
                             print(f"Error sending tweet for @{user.username} to chat {chat_id}: {e}")
-                        if not last_seen:
-                            last_seen = LastSeenUser(chat_id=chat_id, username=user.username, tweet_id=tweet_id)
-                            session.add(last_seen)
-                        else:
-                            last_seen.tweet_id = tweet_id
-                        session.commit()
-            if scan_keywords:
-                keywords = session.query(Keyword).filter_by(chat_id=chat_id).all()
-                for kw in keywords:
-                    if sent_count >= RATE_LIMIT_PER_RUN:
-                        print("Rate limit reached. Pausing autoscan for this run.")
-                        session.close()
+
+            # Add similar logic for keywords if needed
+
+        except Exception as e:
+            print(f"Autoscan error for chat {chat_id}: {e}")
+
+    session.close()
                         return
                     tweets = get_tweets_for_query(kw.keyword, limit=scan_depth)
                     if not tweets:
