@@ -33,8 +33,9 @@ from threading import Lock
 from datetime import datetime, timedelta
 from collections import defaultdict
 import re
-
+from sqlalchemy import Column, Integer, DateTime
 class RateLimiter:
+
     def __init__(self):
         from collections import defaultdict
         self.user_limits = defaultdict(list)
