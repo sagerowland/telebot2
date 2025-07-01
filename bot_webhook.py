@@ -947,14 +947,16 @@ def graph_handler(message):
 
     bot.send_photo(message.chat.id, buf, caption=f"📈 {ticker} Candlestick Chart with SMA, EMA, Bollinger Bands, Volume, RSI ({rsi_period})")
 
-def send_clean_tweet(chat_id, entry, username):
-    clean_text = re.sub(r'R to @\w+:|http\S+', '', entry.title).strip()
-    caption = f"🍀 @{username}\n\n{clean_text}\n\n🔗 {entry.link}"
-    
-    if hasattr(entry, 'media_content'):
-        bot.send_photo(chat_id, entry.media_content[0]['url'], caption=caption)
-    else:
-        bot.send_message(chat_id, caption)
+def clean_tweet_text(text):
+    """Remove unwanted artifacts from tweets"""
+    import re
+    # Remove "R to @user:" patterns
+    text = re.sub(r'R to @\w+:', '', text)
+    # Remove standalone numbers/dates (like "3/2025")
+    text = re.sub(r'\b\d+[/-]\d+\b', '', text)
+    # Remove multiple spaces
+    text = ' '.join(text.split())
+    return text.strip()
 
 @bot.message_handler(commands=['alert'])
 def alert_handler(message):
