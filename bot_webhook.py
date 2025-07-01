@@ -1164,8 +1164,7 @@ def handle_menu(message):
         types.InlineKeyboardButton("🧠 AI Chat", callback_data="menu_ai"),
         types.InlineKeyboardButton("⚙️ Autoscan", callback_data="menu_autoscan")
     )
-    bot.send_message(message.chat.id, "Choose an option:", reply_markup=markup)
-    )
+    bot.send_message(message.chat.id, "Choose an option:", reply_markup=markup)  
 
 @bot.callback_query_handler(func=lambda call: True)
 def handle_menu_callbacks(call):
@@ -1184,9 +1183,9 @@ def handle_menu_callbacks(call):
     elif call.data == "menu_ai":
         bot.answer_callback_query(call.id)
         bot.send_message(call.message.chat.id, "🧠 Ask the AI:\nUse `/gemini <your question>`")
-    elif call.data == "menu_autoscan":
+    elif call.data == "menu_autoscan":  # Fixed incomplete block
         bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "⚙️ Autoscan controls:\n• /pauseautoscan\n• /resumeautoscan\n• /scanmode\n• /myautoscan")
+        bot.send_message(call.message.chat.id, "⚙️ Autoscan commands:\n• /pauseautoscan\n• /resumeautoscan\n• /myautoscan")
  
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
