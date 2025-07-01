@@ -444,13 +444,8 @@ def autoscan():
                             session.commit()
                         except Exception as e:
                             print(f"Error sending tweet for @{user.username} to chat {chat_id}: {e}")
-
-            # Add similar logic for keywords if needed
-
-        except Exception as e:
-            print(f"Autoscan error for chat {chat_id}: {e}")
-
     session.close()
+    
                         return
                     tweets = get_tweets_for_query(kw.keyword, limit=scan_depth)
                     if not tweets:
