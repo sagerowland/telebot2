@@ -264,6 +264,29 @@ class LastSeenKeyword(Base):
     keyword = Column(String)
     tweet_id = Column(String)
     __table_args__ = (UniqueConstraint('chat_id', 'keyword', name='uq_keyword_chat'),)
+    # Add these lines after your last model class but before Base.metadata.create_all(engine)
+
+class ProcessedUpdate(Base):
+    __tablename__ = 'processed_updates'
+    update_id = Column(Integer, primary_key=True)
+    processed_at = Column(DateTime, default=datetime.utcnow)
+
+class RateLimiter:
+    def __init__(self):
+        from collections import defaultdict
+        self.user_limits = defaultdict(list)
+    
+    def check_limit(self, user_id, limit=3, period=60):
+        from datetime import datetime, timedelta
+        now = datetime.now()
+        self.user_limits[user_id] = [
+            t for t in self.user_limits[user_id] 
+            if now - t < timedelta(seconds=period)
+        ]
+        if len(self.user_limits[user_id]) >= limit:
+            return False
+        self.user_limits[user_id].append(now)
+        return True
 
 Base.metadata.create_all(engine)
 
