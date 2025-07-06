@@ -35,6 +35,36 @@ from sqlalchemy import Column, Integer, DateTime
 from pymongo.mongo_client import MongoClient
 import openai
 
+client = openai.AzureOpenAI(
+    api_key=os.getenv("AZURE_API_KEY"),
+    api_version=os.getenv("AZURE_API_VERSION"),
+    azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+)
+
+response = client.chat.completions.create(
+    model=os.getenv("AZURE_DEPLOYMENT"),  # Usually your deployment name
+    messages=[
+        {"role": "user", "content": user_input}
+    ],
+    max_tokens=256,
+    temperature=0.7
+)
+bot.reply_to(message, response.choices[0].message.content)
+
+def huggingface_generate(prompt):
+    API_URL = "https://api-inference.huggingface.co/models/distilbert/distilgpt2"
+    headers = {"Authorization": f"Bearer {os.getenv('HUGGINGFACE_TOKEN')}"}
+    payload = {
+        "inputs": prompt,
+        "parameters": {"max_length": 100}
+    }
+    response = requests.post(API_URL, headers=headers, json=payload)
+    if response.status_code == 200:
+        generated_text = response.json()[0]['generated_text']
+        return generated_text
+    else:
+        return "⚠️ Hugging Face API error. Try again later."
+
 class RateLimiter:
     def __init__(self):
         from collections import defaultdict
@@ -1091,32 +1121,38 @@ def handle_gemini(message):
 
     bot.reply_to(message, "💡 Thinking...")
 
+    # Azure OpenAI (new API)
     try:
-        # Try Azure OpenAI first
-        openai.api_type = "azure"
-        openai.api_key = AZURE_API_KEY
-        openai.api_base = AZURE_ENDPOINT
-        openai.api_version = AZURE_API_VERSION
-        response = openai.ChatCompletion.create(
-            engine=AZURE_DEPLOYMENT,
+        client = openai.AzureOpenAI(
+            api_key=os.getenv("AZURE_API_KEY"),
+            api_version=os.getenv("AZURE_API_VERSION"),
+            azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+        )
+        response = client.chat.completions.create(
+            model=os.getenv("AZURE_DEPLOYMENT"),
             messages=[{"role": "user", "content": user_input}],
             max_tokens=256,
             temperature=0.7
         )
-        bot.reply_to(message, response['choices'][0]['message']['content'])
+        bot.reply_to(message, response.choices[0].message.content)
+        return
     except Exception as e:
         print("Azure OpenAI failed:", e)
-        try:
-            # Fallback to Gemini
-            response = gemini_model.generate_content(user_input)
-            bot.reply_to(message, response.text)
-        except Exception as ge:
-            if "429" in str(ge):
-                bot.reply_to(message, "⚠️ Gemini rate limit reached. Switching to Hugging Face...")
-                hf_output = huggingface_generate(user_input)
-                bot.reply_to(message, hf_output)
-            else:
-                bot.reply_to(message, f"Gemini error: {str(ge)}")
+
+    # Gemini fallback (code unchanged)
+    try:
+        response = gemini_model.generate_content(user_input)
+        bot.reply_to(message, response.text)
+        return
+    except Exception as ge:
+        print("Gemini failed:", ge)
+
+    # HuggingFace fallback
+    try:
+        hf_output = huggingface_generate(user_input)
+        bot.reply_to(message, hf_output)
+    except Exception as he:
+        bot.reply_to(message, "All AI services are currently unavailable. Try again later.")
         
 @bot.message_handler(commands=['setinterval'])
 def setinterval_handler(message):
