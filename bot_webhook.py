@@ -1433,6 +1433,29 @@ def top_tweets_handler(message):
         )
 
 # --- Keyword Command Handlers ---
+@bot.message_handler(commands=['checkdb'])
+def check_db_handler(message):
+    try:
+        # Create a test document
+        test_document = {"_id": "test", "value": "MongoDB is working!"}
+        
+        # Insert the test document into a test collection
+        analytics_db.test_collection.insert_one(test_document)
+        
+        # Retrieve the test document
+        retrieved_document = analytics_db.test_collection.find_one({"_id": "test"})
+        
+        # Check if the retrieved document matches the inserted document
+        if retrieved_document and retrieved_document["value"] == test_document["value"]:
+            bot.reply_to(message, "✅ MongoDB is working! Test document was successfully stored and retrieved.")
+        else:
+            bot.reply_to(message, "❌ MongoDB test failed. Document could not be retrieved.")
+        
+        # Clean up: Remove the test document
+        analytics_db.test_collection.delete_one({"_id": "test"})
+    except Exception as e:
+        bot.reply_to(message, f"❌ MongoDB error: {str(e)}")
+        
 @bot.message_handler(commands=['addkeyword'])
 def add_keyword_handler(message):
     args = message.text.split()
