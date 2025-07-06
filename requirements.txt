@@ -17,5 +17,6 @@ beautifulsoup4
 apscheduler
 google-generativeai
 regex
-pymongo==4.13.2 dnspython
+pymongo==4.13.2 
+dnspython
 openai
