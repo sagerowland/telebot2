@@ -34,7 +34,6 @@ import re
 from sqlalchemy import Column, Integer, DateTime
 from pymongo.mongo_client import MongoClient
 import openai
-from flask import Flask, request
 
 class RateLimiter:
     def __init__(self):
