@@ -18,3 +18,4 @@ apscheduler
 google-generativeai
 regex
 pymongo[srv]
+openai
