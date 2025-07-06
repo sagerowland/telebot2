@@ -1,253 +1,73 @@
 import os
 import io
+import re
 import random
 import time
-from flask import Flask, request
-import telebot
-from telebot.types import Update
-from sqlalchemy import create_engine, Column, BigInteger, String, Float, Integer, Boolean, UniqueConstraint
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from dotenv import load_dotenv
+import logging
+from datetime import datetime, timedelta
+from collections import defaultdict
+from threading import Lock
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import feedparser
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
-from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-import requests
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from bs4 import BeautifulSoup
-from apscheduler.schedulers.background import BackgroundScheduler
-import google.generativeai as genai
-from google.generativeai import configure, GenerativeModel
-import telebot
-from alpha import get_stock_price, get_company_overview
 import mplfinance as mpf
 import matplotlib.dates as mdates
-import sys
-import logging
-from telebot import types
-from threading import Lock
-from datetime import datetime, timedelta
-from collections import defaultdict
-import re
-from sqlalchemy import Column, Integer, DateTime
-from pymongo.mongo_client import MongoClient
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from flask import Flask, request
+import telebot
+from telebot.types import Update, InlineKeyboardMarkup, InlineKeyboardButton
+from sqlalchemy import create_engine, Column, BigInteger, String, Float, Integer, Boolean, UniqueConstraint
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from apscheduler.schedulers.background import BackgroundScheduler
+from pymongo import MongoClient
+import requests
 import openai
+import google.generativeai as genai
+from google.generativeai import configure
 
-client = openai.AzureOpenAI(
-    api_key=os.getenv("AZURE_API_KEY"),
-    api_version=os.getenv("AZURE_API_VERSION"),
-    azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler('bot.log')
+    ]
 )
+logger = logging.getLogger(__name__)
 
-response = client.chat.completions.create(
-    model=os.getenv("AZURE_DEPLOYMENT"),  # Usually your deployment name
-    messages=[
-        {"role": "user", "content": user_input}
-    ],
-    max_tokens=256,
-    temperature=0.7
-)
-bot.reply_to(message, response.choices[0].message.content)
-
-def huggingface_generate(prompt):
-    API_URL = "https://api-inference.huggingface.co/models/distilbert/distilgpt2"
-    headers = {"Authorization": f"Bearer {os.getenv('HUGGINGFACE_TOKEN')}"}
-    payload = {
-        "inputs": prompt,
-        "parameters": {"max_length": 100}
-    }
-    response = requests.post(API_URL, headers=headers, json=payload)
-    if response.status_code == 200:
-        generated_text = response.json()[0]['generated_text']
-        return generated_text
-    else:
-        return "⚠️ Hugging Face API error. Try again later."
-
-class RateLimiter:
-    def __init__(self):
-        from collections import defaultdict
-        self.user_limits = defaultdict(list)
-    
-    def check_limit(self, user_id, limit=3, period=60):
-        from datetime import datetime, timedelta
-        now = datetime.now()
-        # Clear old timestamps
-        self.user_limits[user_id] = [
-            t for t in self.user_limits[user_id] 
-            if now - t < timedelta(seconds=period)
-        ]
-        if len(self.user_limits[user_id]) >= limit:
-            return False
-        self.user_limits[user_id].append(now)
-        return True
-
-# --- Nitter instance discovery and fallback logic ---
-EXTRA_INSTANCES = [
-    "https://xcancel.com",
-    "https://nitter.poast.org",
-    "https://nitter.privacyredirect.com",
-    "https://lightbrd.com",
-    "https://nitter.space",
-    "https://nitter.tiekoetter.com",
-    "https://nitter.kareem.one",
-    "https://nuku.trabun.org"
-]
-
-STATIC_NITTER_INSTANCES = [
-    "https://nitter.net",
-    "https://nitter.privacydev.net",
-    "https://nitter.poast.org",
-    "https://nitter.1d4.us",
-    "https://nitter.moomoo.me",
-    "https://nitter.pussthecat.org",
-]
-
-def get_nitter_instances_from_html_status():
-    url = "https://status.d420.de/"
-    try:
-        resp = requests.get(url, timeout=10)
-        soup = BeautifulSoup(resp.text, "html.parser")
-        instances = []
-        table = soup.find("table")
-        if not table:
-            return instances
-        for row in table.find_all("tr")[1:]:
-            cols = row.find_all("td")
-            if len(cols) < 4:
-                continue
-            url_tag = cols[0].find("a")
-            online = cols[1].text.strip()
-            working = cols[2].text.strip()
-            if url_tag and online == "✅" and working == "✅":
-                instance_url = url_tag["href"].rstrip("/")
-                if not instance_url.startswith("http"):
-                    instance_url = "https://" + instance_url
-                instances.append(instance_url)
-        return instances
-    except Exception as e:
-        print(f"Error fetching Nitter status: {e}")
-        return []
-
-def get_all_nitter_instances():
-    scraped = get_nitter_instances_from_html_status()
-    all_instances = set(scraped) | set(EXTRA_INSTANCES)
-    if not all_instances:
-        all_instances = set(EXTRA_INSTANCES) | set(STATIC_NITTER_INSTANCES)
-    return list(all_instances)
-
-def _fetch_feed(rss_url):
-    try:
-        feed = feedparser.parse(rss_url)
-        if feed.entries:
-            return feed.entries
-    except Exception:
-        pass
-    return None
-
-def get_twitter_rss(username):
-    try:
-        rss_url = f"https://twiiit.com/{username}/rss"
-        feed = feedparser.parse(rss_url)
-        if feed.entries:
-            return feed.entries
-    except Exception:
-        pass
-    instances = get_all_nitter_instances()
-    urls = [f"{base}/{username}/rss" for base in instances]
-    random.shuffle(urls)
-    with ThreadPoolExecutor(max_workers=min(10, len(urls))) as executor:
-        future_to_url = {executor.submit(_fetch_feed, url): url for url in urls}
-        for future in as_completed(future_to_url):
-            result = future.result()
-            if result:
-                return result
-    for base_url in STATIC_NITTER_INSTANCES + ["https://twitrss.me/twitter_user_to_rss"]:
-        try:
-            if "nitter" in base_url:
-                rss_url = f"{base_url}/{username}/rss"
-            else:
-                rss_url = f"{base_url}/?user={username}"
-            feed = feedparser.parse(rss_url)
-            if feed.entries:
-                return feed.entries
-        except Exception:
-            continue
-    return []
-
-def extract_image_url(entry):
-    if hasattr(entry, 'media_content') and entry.media_content:
-        return entry.media_content[0].get('url')
-    elif hasattr(entry, 'links'):
-        for link in entry.links:
-            if link.get('type', '').startswith('image/'):
-                return link['href']
-    return None
-
-def get_latest_tweet(username):
-    tweets = get_twitter_rss(username)
-    if tweets:
-        return tweets[0]
-    return None
-
-def get_tweets_for_query(query, limit=5):
-    try:
-        rss_url = f"https://twiiit.com/search/rss?f=tweets&q={query}"
-        feed = feedparser.parse(rss_url)
-        if feed.entries:
-            return feed.entries[:limit]
-    except Exception:
-        pass
-    instances = get_all_nitter_instances()
-    random.shuffle(instances)
-    for base_url in instances:
-        try:
-            rss = feedparser.parse(f"{base_url}/search/rss?f=tweets&q={query}")
-            if rss.entries:
-                return rss.entries[:limit]
-        except Exception:
-            continue
-    for base_url in STATIC_NITTER_INSTANCES:
-        try:
-            rss = feedparser.parse(f"{base_url}/search/rss?f=tweets&q={query}")
-            if rss.entries:
-                return rss.entries[:limit]
-        except Exception:
-            continue
-    return []
-
-# --- Load environment ---
+# --- Configuration and Initialization ---
 load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-GEMINI_KEY = os.getenv("GEMINI_KEY")
-HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
-AZURE_API_KEY = os.getenv("AZURE_API_KEY")
-AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
-AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT")
-AZURE_API_VERSION = os.getenv("AZURE_API_VERSION")
-MONGODB_URI = os.getenv("MONGODB_URI")
 
-configure(api_key=GEMINI_KEY)
+class Config:
+    BOT_TOKEN = os.getenv("BOT_TOKEN")
+    DATABASE_URL = os.getenv("DATABASE_URL")
+    WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+    GEMINI_KEY = os.getenv("GEMINI_KEY")
+    HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+    AZURE_API_KEY = os.getenv("AZURE_API_KEY")
+    AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
+    AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT")
+    AZURE_API_VERSION = os.getenv("AZURE_API_VERSION")
+    MONGODB_URI = os.getenv("MONGODB_URI")
+    MAX_WORKERS = int(os.getenv("MAX_WORKERS", 10))
+    RATE_LIMIT = int(os.getenv("RATE_LIMIT", 3))
+    RATE_LIMIT_PERIOD = int(os.getenv("RATE_LIMIT_PERIOD", 60))
+    AUTOSCAN_INTERVAL = int(os.getenv("AUTOSCAN_INTERVAL", 5))
 
-gemini_model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest")
-
-bot = telebot.TeleBot(BOT_TOKEN, threaded=False)
-update_lock = Lock()
-limiter = RateLimiter()
+# Initialize Flask and Telebot
 app = Flask(__name__)
+bot = telebot.TeleBot(Config.BOT_TOKEN, threaded=False)
+update_lock = Lock()
 
-# --- Database setup ---
+# --- Database Models ---
 Base = declarative_base()
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    pool_recycle=300,
-    connect_args={"sslmode": "require"}
-)
-SessionLocal = sessionmaker(bind=engine)
 
 class Tracked(Base):
     __tablename__ = 'tracked'
@@ -306,9 +126,885 @@ class ProcessedUpdate(Base):
     update_id = Column(Integer, primary_key=True)
     processed_at = Column(DateTime, default=datetime.utcnow)
 
+# Initialize database
+engine = create_engine(
+    Config.DATABASE_URL,
+    pool_pre_ping=True,
+    pool_recycle=300,
+    connect_args={"sslmode": "require"}
+)
+SessionLocal = sessionmaker(bind=engine)
+
 Base.metadata.create_all(engine)
 
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+# Initialize MongoDB for analytics
+mongo_client = MongoClient(Config.MONGODB_URI)
+analytics_db = mongo_client.get_database("analytics")
+
+# --- Helper Functions ---
+def huggingface_generate(prompt):
+    """Generate text using HuggingFace API"""
+    try:
+        API_URL = "https://api-inference.huggingface.co/models/gpt2"
+        headers = {"Authorization": f"Bearer {Config.HUGGINGFACE_TOKEN}"}
+        response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
+        return response.json()[0]['generated_text']
+    except Exception as e:
+        logger.error(f"HuggingFace error: {e}")
+        return "Sorry, I couldn't generate a response."
+
+def get_company_overview(symbol):
+    """Get company overview from Alpha Vantage"""
+    try:
+        # This would be replaced with actual Alpha Vantage API call
+        return f"Company overview for {symbol} would appear here from Alpha Vantage"
+    except Exception as e:
+        logger.error(f"Error getting company overview: {e}")
+        return "Could not retrieve company overview."
+
+def get_insider_trades(symbol):
+    """Get insider trades for a symbol"""
+    try:
+        # This would be replaced with actual insider trading data
+        return [f"Insider trading data for {symbol} would appear here"]
+    except Exception as e:
+        logger.error(f"Error getting insider trades: {e}")
+        return ["Could not retrieve insider trading data."]
+
+def get_stock_news(symbol):
+    """Get news for a stock"""
+    try:
+        # This would be replaced with actual news API call
+        return [f"News for {symbol} would appear here"]
+    except Exception as e:
+        logger.error(f"Error getting stock news: {e}")
+        return ["Could not retrieve news."]
+
+# --- Rate Limiting ---
+class RateLimiter:
+    def __init__(self):
+        self.user_limits = defaultdict(list)
+    
+    def check_limit(self, user_id, limit=Config.RATE_LIMIT, period=Config.RATE_LIMIT_PERIOD):
+        now = datetime.now()
+        # Clear old timestamps
+        self.user_limits[user_id] = [
+            t for t in self.user_limits[user_id] 
+            if now - t < timedelta(seconds=period)
+        ]
+        if len(self.user_limits[user_id]) >= limit:
+            return False
+        self.user_limits[user_id].append(now)
+        return True
+
+limiter = RateLimiter()
+
+# --- Twitter/Nitter Integration ---
+class TwitterService:
+    STATIC_INSTANCES = [
+        "https://nitter.net",
+        "https://nitter.privacydev.net",
+        "https://nitter.poast.org",
+        "https://nitter.1d4.us",
+        "https://nitter.moomoo.me",
+        "https://nitter.pussthecat.org",
+    ]
+    
+    EXTRA_INSTANCES = [
+        "https://xcancel.com",
+        "https://nitter.poast.org",
+        "https://nitter.privacyredirect.com",
+        "https://lightbrd.com",
+        "https://nitter.space",
+        "https://nitter.tiekoetter.com",
+        "https://nitter.kareem.one",
+        "https://nuku.trabun.org"
+    ]
+    
+    @staticmethod
+    def get_nitter_instances_from_html_status():
+        url = "https://status.d420.de/"
+        try:
+            resp = requests.get(url, timeout=10)
+            soup = BeautifulSoup(resp.text, "html.parser")
+            instances = []
+            table = soup.find("table")
+            if not table:
+                return instances
+            for row in table.find_all("tr")[1:]:
+                cols = row.find_all("td")
+                if len(cols) < 4:
+                    continue
+                url_tag = cols[0].find("a")
+                online = cols[1].text.strip()
+                working = cols[2].text.strip()
+                if url_tag and online == "✅" and working == "✅":
+                    instance_url = url_tag["href"].rstrip("/")
+                    if not instance_url.startswith("http"):
+                        instance_url = "https://" + instance_url
+                    instances.append(instance_url)
+            return instances
+        except Exception as e:
+            logger.error(f"Error fetching Nitter status: {e}")
+            return []
+    
+    @staticmethod
+    def get_all_nitter_instances():
+        scraped = TwitterService.get_nitter_instances_from_html_status()
+        all_instances = set(scraped) | set(TwitterService.EXTRA_INSTANCES)
+        if not all_instances:
+            all_instances = set(TwitterService.EXTRA_INSTANCES) | set(TwitterService.STATIC_INSTANCES)
+        return list(all_instances)
+    
+    @staticmethod
+    def _fetch_feed(rss_url):
+        try:
+            feed = feedparser.parse(rss_url)
+            if feed.entries:
+                return feed.entries
+        except Exception as e:
+            logger.error(f"Error fetching feed from {rss_url}: {e}")
+        return None
+    
+    @staticmethod
+    def get_twitter_rss(username):
+        try:
+            rss_url = f"https://twiiit.com/{username}/rss"
+            feed = feedparser.parse(rss_url)
+            if feed.entries:
+                return feed.entries
+        except Exception as e:
+            logger.error(f"Error with twiiit.com: {e}")
+        
+        instances = TwitterService.get_all_nitter_instances()
+        urls = [f"{base}/{username}/rss" for base in instances]
+        random.shuffle(urls)
+        
+        with ThreadPoolExecutor(max_workers=min(Config.MAX_WORKERS, len(urls))) as executor:
+            future_to_url = {executor.submit(TwitterService._fetch_feed, url): url for url in urls}
+            for future in as_completed(future_to_url):
+                result = future.result()
+                if result:
+                    return result
+        
+        for base_url in TwitterService.STATIC_INSTANCES + ["https://twitrss.me/twitter_user_to_rss"]:
+            try:
+                if "nitter" in base_url:
+                    rss_url = f"{base_url}/{username}/rss"
+                else:
+                    rss_url = f"{base_url}/?user={username}"
+                feed = feedparser.parse(rss_url)
+                if feed.entries:
+                    return feed.entries
+            except Exception as e:
+                logger.error(f"Error with {base_url}: {e}")
+                continue
+        return []
+    
+    @staticmethod
+    def extract_image_url(entry):
+        if hasattr(entry, 'media_content') and entry.media_content:
+            return entry.media_content[0].get('url')
+        elif hasattr(entry, 'links'):
+            for link in entry.links:
+                if link.get('type', '').startswith('image/'):
+                    return link['href']
+        return None
+    
+    @staticmethod
+    def get_latest_tweet(username):
+        tweets = TwitterService.get_twitter_rss(username)
+        if tweets:
+            return tweets[0]
+        return None
+    
+    @staticmethod
+    def get_tweets_for_query(query, limit=5):
+        try:
+            rss_url = f"https://twiiit.com/search/rss?f=tweets&q={query}"
+            feed = feedparser.parse(rss_url)
+            if feed.entries:
+                return feed.entries[:limit]
+        except Exception as e:
+            logger.error(f"Error with twiiit.com search: {e}")
+        
+        instances = TwitterService.get_all_nitter_instances()
+        random.shuffle(instances)
+        
+        for base_url in instances:
+            try:
+                rss = feedparser.parse(f"{base_url}/search/rss?f=tweets&q={query}")
+                if rss.entries:
+                    return rss.entries[:limit]
+            except Exception as e:
+                logger.error(f"Error with {base_url} search: {e}")
+                continue
+        
+        for base_url in TwitterService.STATIC_INSTANCES:
+            try:
+                rss = feedparser.parse(f"{base_url}/search/rss?f=tweets&q={query}")
+                if rss.entries:
+                    return rss.entries[:limit]
+            except Exception as e:
+                logger.error(f"Error with static {base_url} search: {e}")
+                continue
+        return []
+
+# --- Stock Market Utilities ---
+class StockService:
+    @staticmethod
+    def get_stock_price(ticker):
+        try:
+            data = yf.Ticker(ticker)
+            price = data.history(period="1d")['Close'][0]
+            return price
+        except Exception as e:
+            logger.error(f"Error getting stock price for {ticker}: {e}")
+            return None
+    
+    @staticmethod
+    def get_stock_info(ticker):
+        try:
+            data = yf.Ticker(ticker)
+            info = data.info
+            return info
+        except Exception as e:
+            logger.error(f"Error getting stock info for {ticker}: {e}")
+            return None
+    
+    @staticmethod
+    def generate_stock_chart(ticker, period="1mo", interval="1d"):
+        try:
+            data = yf.Ticker(ticker).history(period=period, interval=interval)
+            if data.empty:
+                return None
+            
+            plt.figure(figsize=(10, 4))
+            data['Close'].plot(title=f"{ticker} Close Price")
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            plt.close()
+            return buf
+        except Exception as e:
+            logger.error(f"Error generating chart for {ticker}: {e}")
+            return None
+    
+    @staticmethod
+    def generate_advanced_chart(ticker, period="1mo", rsi_period=14):
+        try:
+            data = yf.Ticker(ticker).history(period=period, interval="1d")
+            if data.empty:
+                return None
+            
+            # Create subplots
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), gridspec_kw={'height_ratios': [3, 1]})
+            
+            # Plot candlestick
+            mpf.plot(data, type='candle', style='charles', ax=ax1, volume=ax2, show_nontrading=False)
+            
+            # Calculate and plot RSI
+            delta = data['Close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=rsi_period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=rsi_period).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            ax2.plot(data.index, rsi, label='RSI', color='purple')
+            ax2.axhline(30, color='green', linestyle='--')
+            ax2.axhline(70, color='red', linestyle='--')
+            ax2.set_ylim(0, 100)
+            ax2.legend()
+            
+            # Formatting
+            ax1.set_title(f"{ticker} Price with RSI {rsi_period}")
+            plt.tight_layout()
+            
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png')
+            buf.seek(0)
+            plt.close()
+            return buf
+        except Exception as e:
+            logger.error(f"Error generating advanced chart for {ticker}: {e}")
+            return None
+    
+    @staticmethod
+    def get_crypto_price(symbol):
+        try:
+            ticker = yf.Ticker(f"{symbol}-USD")
+            price = ticker.history(period="1d")['Close'][0]
+            return price
+        except Exception as e:
+            logger.error(f"Error getting crypto price for {symbol}: {e}")
+            return None
+    
+    @staticmethod
+    def analyze_sentiment(text):
+        try:
+            analyzer = SentimentIntensityAnalyzer()
+            return analyzer.polarity_scores(text)
+        except Exception as e:
+            logger.error(f"Error analyzing sentiment: {e}")
+            return None
+
+# --- AI Services ---
+class AIService:
+    @staticmethod
+    def generate_with_azure(prompt):
+        try:
+            client = openai.AzureOpenAI(
+                api_key=Config.AZURE_API_KEY,
+                api_version=Config.AZURE_API_VERSION,
+                azure_endpoint=Config.AZURE_ENDPOINT,
+            )
+            response = client.chat.completions.create(
+                model=Config.AZURE_DEPLOYMENT,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=256,
+                temperature=0.7,
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            logger.error(f"Azure OpenAI error: {e}")
+            return None
+    
+    @staticmethod
+    def generate_with_gemini(prompt):
+        try:
+            genai.configure(api_key=Config.GEMINI_KEY)
+            model = genai.GenerativeModel(model_name="gemini-1.5-pro-latest")
+            response = model.generate_content(prompt)
+            return response.text
+        except Exception as e:
+            logger.error(f"Gemini error: {e}")
+            return None
+    
+    @staticmethod
+    def generate_with_huggingface(prompt):
+        try:
+            API_URL = "https://api-inference.huggingface.co/models/gpt2"
+            headers = {"Authorization": f"Bearer {Config.HUGGINGFACE_TOKEN}"}
+            response = requests.post(API_URL, headers=headers, json={"inputs": prompt})
+            return response.json()[0]['generated_text']
+        except Exception as e:
+            logger.error(f"HuggingFace error: {e}")
+            return None
+    
+    @staticmethod
+    def generate_response(prompt):
+        # Try Azure first
+        response = AIService.generate_with_azure(prompt)
+        if response:
+            return response
+        
+        # Fallback to Gemini
+        response = AIService.generate_with_gemini(prompt)
+        if response:
+            return response
+        
+        # Final fallback to HuggingFace
+        return AIService.generate_with_huggingface(prompt) or "Sorry, I couldn't generate a response."
+
+# --- Portfolio Management ---
+class PortfolioService:
+    @staticmethod
+    def add_stock(chat_id, ticker, qty, price):
+        session = SessionLocal()
+        try:
+            stock = Portfolio(chat_id=chat_id, ticker=ticker, qty=qty, price=price)
+            session.add(stock)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding stock: {e}")
+            return False
+        finally:
+            session.close()
+    
+    @staticmethod
+    def remove_stock(chat_id, ticker):
+        session = SessionLocal()
+        try:
+            count = session.query(Portfolio).filter_by(chat_id=chat_id, ticker=ticker).delete()
+            session.commit()
+            return count > 0
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error removing stock: {e}")
+            return False
+        finally:
+            session.close()
+    
+    @staticmethod
+    def get_portfolio(chat_id):
+        session = SessionLocal()
+        try:
+            stocks = session.query(Portfolio).filter_by(chat_id=chat_id).all()
+            return stocks
+        except Exception as e:
+            logger.error(f"Error getting portfolio: {e}")
+            return []
+        finally:
+            session.close()
+    
+    @staticmethod
+    def calculate_portfolio_value(stocks):
+        total = 0.0
+        holdings = []
+        for stock in stocks:
+            value = stock.qty * stock.price
+            holdings.append({
+                'ticker': stock.ticker,
+                'qty': stock.qty,
+                'price': stock.price,
+                'value': value
+            })
+            total += value
+        return {
+            'holdings': holdings,
+            'total': total
+        }
+
+# --- Alert Management ---
+class AlertService:
+    @staticmethod
+    def add_alert(chat_id, ticker, direction, price):
+        session = SessionLocal()
+        try:
+            alert = Alert(chat_id=chat_id, ticker=ticker, direction=direction, price=price)
+            session.add(alert)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding alert: {e}")
+            return False
+        finally:
+            session.close()
+    
+    @staticmethod
+    def remove_alert(chat_id, alert_id):
+        session = SessionLocal()
+        try:
+            count = session.query(Alert).filter_by(chat_id=chat_id, id=alert_id).delete()
+            session.commit()
+            return count > 0
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error removing alert: {e}")
+            return False
+        finally:
+            session.close()
+    
+    @staticmethod
+    def get_alerts(chat_id):
+        session = SessionLocal()
+        try:
+            alerts = session.query(Alert).filter_by(chat_id=chat_id).all()
+            return alerts
+        except Exception as e:
+            logger.error(f"Error getting alerts: {e}")
+            return []
+        finally:
+            session.close()
+    
+    @staticmethod
+    def check_alerts():
+        session = SessionLocal()
+        try:
+            alerts = session.query(Alert).all()
+            triggered = []
+            
+            # Group alerts by ticker to minimize API calls
+            ticker_alerts = defaultdict(list)
+            for alert in alerts:
+                ticker_alerts[alert.ticker].append(alert)
+            
+            for ticker, alert_list in ticker_alerts.items():
+                try:
+                    current_price = StockService.get_stock_price(ticker)
+                    if current_price is None:
+                        continue
+                    
+                    for alert in alert_list:
+                        if alert.direction == "ABOVE" and current_price > alert.price:
+                            triggered.append((alert, current_price))
+                        elif alert.direction == "BELOW" and current_price < alert.price:
+                            triggered.append((alert, current_price))
+                except Exception as e:
+                    logger.error(f"Error checking alerts for {ticker}: {e}")
+            
+            return triggered
+        except Exception as e:
+            logger.error(f"Error checking alerts: {e}")
+            return []
+        finally:
+            session.close()
+
+# --- Twitter Account Management ---
+class TwitterAccountService:
+    @staticmethod
+    def add_account(chat_id, username):
+        session = SessionLocal()
+        try:
+            # Remove @ if present
+            username = username.lstrip('@')
+            
+            if session.query(Tracked).filter_by(chat_id=chat_id, username=username).first():
+                return False  # Already exists
+            
+            account = Tracked(chat_id=chat_id, username=username)
+            session.add(account)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding account: {e}")
+            return False
+        finally:
+            session.close()
+    
+    @staticmethod
+    def remove_account(chat_id, username):
+        session = SessionLocal()
+        try:
+            username = username.lstrip('@')
+            count = session.query(Tracked).filter_by(chat_id=chat_id, username=username).delete()
+            session.commit()
+            return count > 0
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error removing account: {e}")
+            return False
+        finally:
+            session.close()
+    
+    @staticmethod
+    def get_accounts(chat_id):
+        session = SessionLocal()
+        try:
+            accounts = session.query(Tracked).filter_by(chat_id=chat_id).all()
+            return [account.username for account in accounts]
+        except Exception as e:
+            logger.error(f"Error getting accounts: {e}")
+            return []
+        finally:
+            session.close()
+    
+    @staticmethod
+    def clear_accounts(chat_id):
+        session = SessionLocal()
+        try:
+            count = session.query(Tracked).filter_by(chat_id=chat_id).delete()
+            session.commit()
+            return count
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error clearing accounts: {e}")
+            return 0
+        finally:
+            session.close()
+
+# --- Keyword Tracking ---
+class KeywordService:
+    @staticmethod
+    def add_keyword(chat_id, keyword):
+        session = SessionLocal()
+        try:
+            if session.query(Keyword).filter_by(chat_id=chat_id, keyword=keyword).first():
+                return False  # Already exists
+            
+            kw = Keyword(chat_id=chat_id, keyword=keyword)
+            session.add(kw)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding keyword: {e}")
+            return False
+        finally:
+            session.close()
+    
+    @staticmethod
+    def remove_keyword(chat_id, keyword):
+        session = SessionLocal()
+        try:
+            count = session.query(Keyword).filter_by(chat_id=chat_id, keyword=keyword).delete()
+            session.commit()
+            return count > 0
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error removing keyword: {e}")
+            return False
+        finally:
+            session.close()
+    
+    @staticmethod
+    def get_keywords(chat_id):
+        session = SessionLocal()
+        try:
+            keywords = session.query(Keyword).filter_by(chat_id=chat_id).all()
+            return [kw.keyword for kw in keywords]
+        except Exception as e:
+            logger.error(f"Error getting keywords: {e}")
+            return []
+        finally:
+            session.close()
+    
+    @staticmethod
+    def clear_keywords(chat_id):
+        session = SessionLocal()
+        try:
+            count = session.query(Keyword).filter_by(chat_id=chat_id).delete()
+            session.commit()
+            return count
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error clearing keywords: {e}")
+            return 0
+        finally:
+            session.close()
+
+# --- User Settings ---
+class UserSettingsService:
+    @staticmethod
+    def get_settings(chat_id):
+        session = SessionLocal()
+        try:
+            settings = session.query(UserSettings).filter_by(chat_id=chat_id).first()
+            if not settings:
+                # Create default settings if none exist
+                settings = UserSettings(
+                    chat_id=chat_id,
+                    autoscan_paused=False,
+                    scan_accounts=True,
+                    scan_keywords=True,
+                    scan_depth=3
+                )
+                session.add(settings)
+                session.commit()
+            return settings
+        except Exception as e:
+            logger.error(f"Error getting settings: {e}")
+            return None
+        finally:
+            session.close()
+    
+    @staticmethod
+    def update_settings(chat_id, **kwargs):
+        session = SessionLocal()
+        try:
+            settings = session.query(UserSettings).filter_by(chat_id=chat_id).first()
+            if not settings:
+                settings = UserSettings(chat_id=chat_id)
+                session.add(settings)
+            
+            for key, value in kwargs.items():
+                if hasattr(settings, key):
+                    setattr(settings, key, value)
+            
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error updating settings: {e}")
+            return False
+        finally:
+            session.close()
+    
+    @staticmethod
+    def toggle_autoscan(chat_id):
+        session = SessionLocal()
+        try:
+            settings = session.query(UserSettings).filter_by(chat_id=chat_id).first()
+            if not settings:
+                settings = UserSettings(chat_id=chat_id, autoscan_paused=True)
+                session.add(settings)
+                paused = True
+            else:
+                settings.autoscan_paused = not settings.autoscan_paused
+                paused = settings.autoscan_paused
+            session.commit()
+            return paused
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error toggling autoscan: {e}")
+            return None
+        finally:
+            session.close()
+
+# --- Autoscan Service ---
+class AutoscanService:
+    @staticmethod
+    def clean_tweet_text(text):
+        # Remove URLs
+        text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+        # Remove special characters
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+    
+    @staticmethod
+    def send_tweet_with_image(chat_id, entry, prefix):
+        try:
+            clean_text = AutoscanService.clean_tweet_text(entry.title)
+            clean_url = entry.link.split('#')[0].split('?')[0]
+            caption = f"{prefix}\n\n{clean_text}\n\n🔗 {clean_url}"
+            
+            if hasattr(entry, 'media_content') and entry.media_content:
+                bot.send_photo(chat_id, entry.media_content[0]['url'], caption=caption)
+            else:
+                bot.send_message(chat_id, caption)
+        except Exception as e:
+            logger.error(f"Error sending tweet: {e}")
+            # Fallback to minimal message
+            bot.send_message(chat_id, f"{prefix}\n{entry.link.split('#')[0]}")
+    
+    @staticmethod
+    def run_autoscan():
+        logger.info("🍀 Starting autoscan with deduplication and rate limiting")
+        session = SessionLocal()
+        RATE_LIMIT_PER_RUN = 30
+        sent_count = 0
+
+        # Get all unique chat IDs that have tracked accounts or keywords
+        all_chats = set(
+            [r[0] for r in session.query(Tracked.chat_id).distinct()] +
+            [r[0] for r in session.query(Keyword.chat_id).distinct()]
+        )
+        
+        for chat_id in all_chats:
+            settings = UserSettingsService.get_settings(chat_id)
+            if not settings or settings.autoscan_paused:
+                continue
+
+            try:
+                # Account autoscan
+                if settings.scan_accounts:
+                    users = session.query(Tracked).filter_by(chat_id=chat_id).all()
+                    for user in users:
+                        if sent_count >= RATE_LIMIT_PER_RUN:
+                            logger.info("Rate limit reached. Pausing autoscan for this run.")
+                            session.close()
+                            return
+                        
+                        tweets = TwitterService.get_twitter_rss(user.username)
+                        if not tweets:
+                            continue
+                        
+                        last_seen = session.query(LastSeenUser).filter_by(
+                            chat_id=chat_id, 
+                            username=user.username
+                        ).first()
+                        
+                        new_tweets = []
+                        for entry in tweets[:settings.scan_depth]:
+                            tweet_id = getattr(entry, "id", None) or entry.link
+                            if last_seen and tweet_id == last_seen.tweet_id:
+                                break
+                            new_tweets.append((tweet_id, entry))
+                        
+                        # Send from oldest to newest
+                        for tweet_id, entry in reversed(new_tweets):
+                            try:
+                                AutoscanService.send_tweet_with_image(
+                                    chat_id, 
+                                    entry, 
+                                    f"🍀 Autoscan @{user.username}:"
+                                )
+                                sent_count += 1
+                                
+                                # Update last_seen after sending
+                                if last_seen:
+                                    last_seen.tweet_id = tweet_id
+                                else:
+                                    last_seen = LastSeenUser(
+                                        chat_id=chat_id, 
+                                        username=user.username, 
+                                        tweet_id=tweet_id
+                                    )
+                                    session.add(last_seen)
+                                session.commit()
+                            except Exception as e:
+                                logger.error(f"Error sending tweet for @{user.username} to chat {chat_id}: {e}")
+
+                # Keyword autoscan
+                if settings.scan_keywords and sent_count < RATE_LIMIT_PER_RUN:
+                    keywords = session.query(Keyword).filter_by(chat_id=chat_id).all()
+                    for kw in keywords:
+                        if sent_count >= RATE_LIMIT_PER_RUN:
+                            logger.info("Rate limit reached. Pausing autoscan for this run.")
+                            session.close()
+                            return
+                        
+                        tweets = TwitterService.get_tweets_for_query(kw.keyword, limit=settings.scan_depth)
+                        if not tweets:
+                            continue
+                        
+                        last_seen = session.query(LastSeenKeyword).filter_by(
+                            chat_id=chat_id, 
+                            keyword=kw.keyword
+                        ).first()
+                        
+                        new_tweets = []
+                        for entry in tweets:
+                            tweet_id = getattr(entry, "id", None) or entry.link
+                            if last_seen and tweet_id == last_seen.tweet_id:
+                                break
+                            new_tweets.append((tweet_id, entry))
+                        
+                        for tweet_id, entry in reversed(new_tweets):
+                            try:
+                                AutoscanService.send_tweet_with_image(
+                                    chat_id, 
+                                    entry, 
+                                    f"🍀 Autoscan keyword '{kw.keyword}':"
+                                )
+                                sent_count += 1
+                                
+                                # Update last_seen after sending
+                                if last_seen:
+                                    last_seen.tweet_id = tweet_id
+                                else:
+                                    last_seen = LastSeenKeyword(
+                                        chat_id=chat_id, 
+                                        keyword=kw.keyword, 
+                                        tweet_id=tweet_id
+                                    )
+                                    session.add(last_seen)
+                                session.commit()
+                            except Exception as e:
+                                logger.error(f"Error sending keyword '{kw.keyword}' in chat {chat_id}: {e}")
+            except Exception as e:
+                logger.error(f"Error scanning chat {chat_id}: {e}")
+        
+        session.close()
+        logger.info(f"🍀 Autoscan completed. Sent {sent_count} messages.")
+
+# --- Alert Checker ---
+def check_alerts_job():
+    logger.info("🔔 Starting alert check")
+    triggered_alerts = AlertService.check_alerts()
+    
+    for alert, current_price in triggered_alerts:
+        try:
+            direction = "above" if alert.direction == "ABOVE" else "below"
+            message = (
+                f"🚨 Alert triggered!\n"
+                f"{alert.ticker} is now ${current_price:.2f} ({direction} ${alert.price:.2f})\n"
+                f"Alert ID: {alert.id}"
+            )
+            bot.send_message(alert.chat_id, message)
+            
+            # Remove the alert after triggering
+            AlertService.remove_alert(alert.chat_id, alert.id)
+        except Exception as e:
+            logger.error(f"Error sending alert notification: {e}")
+    
+    logger.info(f"🔔 Alert check completed. Found {len(triggered_alerts)} triggered alerts.")
+
+# --- Webhook and Flask Routes ---
+@app.route(f"/{Config.BOT_TOKEN}", methods=["POST"])
 def telegram_webhook():
     if not request.is_json:
         return "Invalid content", 400
@@ -319,10 +1015,13 @@ def telegram_webhook():
         try:
             if session.query(ProcessedUpdate).filter_by(update_id=update.update_id).first():
                 return "OK", 200
-                
             bot.process_new_updates([update])
             session.add(ProcessedUpdate(update_id=update.update_id))
             session.commit()
+        except Exception as e:
+            logger.error(f"Error processing update: {e}")
+            session.rollback()
+            return "Error", 500
         finally:
             session.close()
     return "OK", 200
@@ -331,362 +1030,66 @@ def telegram_webhook():
 def index():
     return "Bot is alive!", 200
 
-def send_tweet_with_image(chat_id, entry, prefix):
-    try:
-        clean_text = clean_tweet_text(entry.title)
-        # Extract base URL without parameters
-        clean_url = entry.link.split('#')[0].split('?')[0]
-        
-        caption = f"{prefix}\n\n{clean_text}\n\n🔗 {clean_url}"
-        
-        if hasattr(entry, 'media_content') and entry.media_content:
-            bot.send_photo(chat_id, entry.media_content[0]['url'], caption=caption)
-        else:
-            bot.send_message(chat_id, caption)
-    except Exception as e:
-        print(f"Error sending tweet: {e}")
-        # Fallback to minimal message
-        bot.send_message(chat_id, f"{prefix}\n{entry.link.split('#')[0]}")
-
-# --- AUTOSCAN CONTROL COMMANDS ---
-def pause_autoscan_handler(message):
-    session = SessionLocal()
-    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
-    if not settings:
-        settings = UserSettings(chat_id=message.chat.id, autoscan_paused=True)
-        session.add(settings)
-    else:
-        settings.autoscan_paused = True
-    session.commit()
-    session.close()
-    bot.reply_to(message, "⏸️ Autoscan paused.")
-
-def resume_autoscan_handler(message):
-    session = SessionLocal()
-    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
-    if not settings:
-        settings = UserSettings(chat_id=message.chat.id, autoscan_paused=False)
-        session.add(settings)
-    else:
-        settings.autoscan_paused = False
-    session.commit()
-    session.close()
-    bot.reply_to(message, "▶️ Autoscan resumed.")
-
-def toggle_autoscan_handler(message):
-    session = SessionLocal()
-    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
-    if not settings:
-        settings = UserSettings(chat_id=message.chat.id, autoscan_paused=True)
-        session.add(settings)
-        paused = True
-    else:
-        settings.autoscan_paused = not settings.autoscan_paused
-        paused = settings.autoscan_paused
-    session.commit()
-    session.close()
-    if paused:
-        bot.reply_to(message, "⏸️ Autoscan paused.")
-    else:
-        bot.reply_to(message, "▶️ Autoscan resumed.")
-
-@bot.message_handler(commands=['pause', 'pauseautoscan'])
-def pause_handler(message):
-    pause_autoscan_handler(message)
-
-@bot.message_handler(commands=['resume', 'resumeautoscan'])
-def resume_handler(message):
-    resume_autoscan_handler(message)
-
-@bot.message_handler(commands=['toggleautoscan'])
-def toggleautoscan_command_handler(message):
-    toggle_autoscan_handler(message)
-
-@bot.message_handler(commands=['scanmode'])
-def scanmode_handler(message):
-    args = message.text.split()
-    if len(args) < 2 or args[1].lower() not in ("all", "accounts", "keywords"):
-        bot.reply_to(message, "🛠️ Usage: /scanmode <all|accounts|keywords>")
-        return
-    mode = args[1].lower()
-    session = SessionLocal()
-    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
-    if not settings:
-        settings = UserSettings(chat_id=message.chat.id)
-        session.add(settings)
-    if mode == "all":
-        settings.scan_accounts = True
-        settings.scan_keywords = True
-    elif mode == "accounts":
-        settings.scan_accounts = True
-        settings.scan_keywords = False
-    elif mode == "keywords":
-        settings.scan_accounts = False
-        settings.scan_keywords = True
-    session.commit()
-    session.close()
-    bot.reply_to(message, f"🛠️ Scan mode set to {mode}.")
-
-@bot.message_handler(commands=['setscandepth'])
-def setscandepth_handler(message):
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "🔢 Usage: /setscandepth <number_of_tweets>")
-        return
-    try:
-        depth = int(args[1])
-        if depth < 1 or depth > 20:
-            bot.reply_to(message, "🔢 Scan depth must be between 1 and 20.")
-            return
-        session = SessionLocal()
-        settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
-        if not settings:
-            settings = UserSettings(chat_id=message.chat.id, scan_depth=depth)
-            session.add(settings)
-        else:
-            settings.scan_depth = depth
-        session.commit()
-        session.close()
-        bot.reply_to(message, f"🔢 Scan depth set to {depth}.")
-    except Exception:
-        bot.reply_to(message, "❌ Invalid scan depth.")
-
-@bot.message_handler(commands=['myautoscan'])
-def myautoscan_handler(message):
-    session = SessionLocal()
-    settings = session.query(UserSettings).filter_by(chat_id=message.chat.id).first()
-    if not settings:
-        bot.reply_to(message, "⚙️ No custom autoscan settings yet.")
-        session.close()
-        return
-    status = "Paused" if settings.autoscan_paused else "Active"
-    mode = []
-    if settings.scan_accounts: mode.append("accounts")
-    if settings.scan_keywords: mode.append("keywords")
-    bot.reply_to(
-        message,
-        f"⚙️ Autoscan status: {status}\n"
-        f"Scan: {', '.join(mode) if mode else 'none'}\n"
-        f"Scan depth: {settings.scan_depth}"
-    )
-    session.close()
-
-# --- AUTOSCAN SCHEDULER FUNCTION ---
-def autoscan():
-    print("🍀 Autoscan running with deduplication, rate-limit, error handling, and user controls!")
-    session = SessionLocal()
-    RATE_LIMIT_PER_RUN = 30
-    sent_count = 0
-
-    # Get all unique chat IDs that have tracked accounts or keywords
-    all_chats = set(
-        [r[0] for r in session.query(Tracked.chat_id).distinct()] +
-        [r[0] for r in session.query(Keyword.chat_id).distinct()]
-    )
-    for chat_id in all_chats:
-        settings = session.query(UserSettings).filter_by(chat_id=chat_id).first()
-        paused = settings.autoscan_paused if settings else False
-        scan_accounts = settings.scan_accounts if settings else True
-        scan_keywords = settings.scan_keywords if settings else True
-        scan_depth = settings.scan_depth if settings else 3
-        if paused:
-            continue
-
-        try:
-            # Account autoscan
-            if scan_accounts:
-                users = session.query(Tracked).filter_by(chat_id=chat_id).all()
-                for user in users:
-                    if sent_count >= RATE_LIMIT_PER_RUN:
-                        print("Rate limit reached. Pausing autoscan for this run.")
-                        session.close()
-                        return
-                    tweets = get_twitter_rss(user.username)
-                    if not tweets:
-                        continue
-                    last_seen = session.query(LastSeenUser).filter_by(chat_id=chat_id, username=user.username).first()
-                    new_tweets = []
-                    for entry in tweets[:scan_depth]:
-                        tweet_id = getattr(entry, "id", None) or entry.link
-                        if last_seen and tweet_id == last_seen.tweet_id:
-                            break
-                        new_tweets.append((tweet_id, entry))
-                    # Send from oldest to newest
-                    for tweet_id, entry in reversed(new_tweets):
-                        try:
-                            send_tweet_with_image(chat_id, entry, f"🍀 Autoscan @{user.username}:")
-                            sent_count += 1
-                            # Always update last_seen after sending
-                            if last_seen:
-                                last_seen.tweet_id = tweet_id
-                            else:
-                                last_seen = LastSeenUser(chat_id=chat_id, username=user.username, tweet_id=tweet_id)
-                                session.add(last_seen)
-                            session.commit()
-                        except Exception as e:
-                            print(f"Error sending tweet for @{user.username} to chat {chat_id}: {e}")
-
-            # Keyword autoscan
-            if scan_keywords:
-                keywords = session.query(Keyword).filter_by(chat_id=chat_id).all()
-                for kw in keywords:
-                    if sent_count >= RATE_LIMIT_PER_RUN:
-                        print("Rate limit reached. Pausing autoscan for this run.")
-                        session.close()
-                        return
-                    tweets = get_tweets_for_query(kw.keyword, limit=scan_depth)
-                    if not tweets:
-                        continue
-                    last_seen = session.query(LastSeenKeyword).filter_by(chat_id=chat_id, keyword=kw.keyword).first()
-                    new_tweets = []
-                    for entry in tweets:
-                        tweet_id = getattr(entry, "id", None) or entry.link
-                        if last_seen and tweet_id == last_seen.tweet_id:
-                            break
-                        new_tweets.append((tweet_id, entry))
-                    for tweet_id, entry in reversed(new_tweets):
-                        try:
-                            send_tweet_with_image(chat_id, entry, f"🍀 Autoscan keyword '{kw.keyword}':")
-                            sent_count += 1
-                            # Always update last_seen after sending
-                            if last_seen:
-                                last_seen.tweet_id = tweet_id
-                            else:
-                                last_seen = LastSeenKeyword(chat_id=chat_id, keyword=kw.keyword, tweet_id=tweet_id)
-                                session.add(last_seen)
-                            session.commit()
-                        except Exception as e:
-                            print(f"Error sending keyword '{kw.keyword}' in chat {chat_id}: {e}")
-        except Exception as e:
-            print(f"Error scanning chat {chat_id}: {e}")
-    session.close()
-
-# --- APScheduler setup ---
-scheduler = BackgroundScheduler()
-scheduler.add_job(autoscan, 'interval', minutes=5)
-scheduler.start()
-
-# --- Set webhook on startup ---
+@app.route("/set_webhook", methods=["GET"])
 def set_webhook():
-    bot.remove_webhook()
-    bot.set_webhook(url=f"{WEBHOOK_URL}/{BOT_TOKEN}")
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=f"{Config.WEBHOOK_URL}/{Config.BOT_TOKEN}")
+        return "Webhook set successfully", 200
+    except Exception as e:
+        return f"Error setting webhook: {e}", 500
 
-set_webhook()
-
-@bot.message_handler(commands=['start'])
-def handle_start(message):
-    bot.reply_to(message, "👋 Hello! I'm your finance & news bot.\nType /help to see what I can do.")
-
-@bot.message_handler(commands=['help'])
+# --- Command Handlers ---
+@bot.message_handler(commands=['start', 'help'])
 def handle_help(message):
     help_text = """
-🤖 *Telegram Bot Commands*
-
-Welcome to your Twitter-scanning, stock-tracking, and AI-powered Telegram bot.
-
----
+🤖 *Finance & News Telegram Bot*
 
 📊 *Stock Tools*
-• `/price <TICKER>` — Get the current price of a stock (e.g., `/price TSLA`)
-• `/info <TICKER>` — Company summary and info
-• `/overview <TICKER>` — Detailed company overview (Alpha Vantage)
-• `/chart <TICKER> [PERIOD] [INTERVAL]` — Show price chart (e.g. `1mo`, `1d`)
-• `/graph <TICKER> [PERIOD] [RSI_PERIOD]` — Advanced candlestick chart with indicators
-• `/news <TICKER>` — Get recent news for a stock
-• `/insider <TICKER>` — Show recent insider trading activity
+• `/price <TICKER>` - Current stock price
+• `/info <TICKER>` - Company summary
+• `/chart <TICKER> [PERIOD] [INTERVAL]` - Price chart
+• `/graph <TICKER> [PERIOD] [RSI_PERIOD]` - Advanced chart
+• `/news <TICKER>` - Recent news
+• `/insider <TICKER>` - Insider trading
 
-💰 *Cryptocurrency*
-• `/crypto <SYMBOL>` — Get cryptocurrency price (e.g., `/crypto BTC`)
-
-💼 *Portfolio Tracker*
-• `/addstock <TICKER> <QTY> <PRICE>` — Add stock to your virtual portfolio
-• `/removestock <TICKER>` — Remove a stock
-• `/viewportfolio` — Show all holdings and total value
+💰 *Portfolio Tracker*
+• `/addstock <TICKER> <QTY> <PRICE>` - Add stock
+• `/removestock <TICKER>` - Remove stock
+• `/viewportfolio` - View holdings
 
 🔔 *Price Alerts*
-• `/alert <TICKER> ABOVE|BELOW <PRICE>` — Set a price alert
-• `/listalerts` — View your current alerts
-• `/removealert <ID>` — Delete a specific alert
-
-🧠 *AI Assistant*
-• `/gemini <prompt>` — Ask anything with AI
-• Aliases: `/ai`, `/gpt`
+• `/alert <TICKER> ABOVE|BELOW <PRICE>` - Set alert
+• `/listalerts` - View alerts
+• `/removealert <ID>` - Delete alert
 
 🐦 *Twitter Tracking*
-• `/add @username` — Track a Twitter account
-• `/remove @username` — Untrack a user
-• `/list` — List tracked accounts
-• `/clear` — Clear all tracked accounts
-• `/last @username` — Show their most recent tweet
-• `/top [N] [@username]` — Show top recent tweets
+• `/add @username` - Track account
+• `/remove @username` - Untrack
+• `/list` - Tracked accounts
+• `/last @username` - Latest tweet
+• `/top [N] @username` - Top tweets
 
 🔍 *Keyword Tracking*
-• `/addkeyword <word>` — Track a keyword on Twitter
-• `/removekeyword <word>` — Stop tracking it
-• `/listkeywords` — View tracked keywords
-
-💬 *Search & Sentiment*
-• `/tweets <query>` — Search recent tweets
-• `/sentiment <text>` — Analyze tone of text
+• `/addkeyword <word>` - Track keyword
+• `/removekeyword <word>` - Untrack
+• `/listkeywords` - Tracked keywords
 
 🔄 *Autoscan Control*
-• `/pause` or `/pauseautoscan` — Pause autoscan
-• `/resume` or `/resumeautoscan` — Resume autoscan
-• `/toggleautoscan` — Toggle scanning on/off
-• `/scanmode all|accounts|keywords` — Choose what gets scanned
-• `/setscandepth <1–20>` — Set depth of tweets per scan
-• `/myautoscan` — View autoscan settings
+• `/pause` - Pause autoscan
+• `/resume` - Resume autoscan
+• `/scanmode all|accounts|keywords` - Set mode
+• `/setscandepth <1-20>` - Set depth
+• `/myautoscan` - View settings
 
-🧹 *Data Management*
-• `/cleardb` — Erase all tracked data (irreversible)
+🧠 *AI Assistant*
+• `/ai <prompt>` - Ask anything
+• `/gpt`, `/gemini` - Aliases
 
-📱 *Interface*
-• `/menu` — Show interactive button menu
-
-🧪 *Coming Soon*
-• `/setinterval` — Set scan interval for alerts (min 60s)
-• `/setquiet` — Set quiet hours for notifications
-• `/settimezone` — Set your timezone for reports
-• `/setschedule` — Schedule daily/weekly reports
-• `/mysettings` — View all your settings
-• `/status` — Show bot status
-• `/mute` — Mute notifications temporarily
-• `/unmute` — Unmute notifications
-• `/trending` — Show trending hashtags
-• `/export` — Export tracked accounts/keywords
-• `/import` — Import from CSV
-
-🆘 *General*
-• `/start` — Welcome message
-• `/help` — Show this menu
+Type /help to see this menu again.
 """
     bot.reply_to(message, help_text, parse_mode="Markdown")
-
-@bot.message_handler(commands=['overview'])
-def handle_overview(message):
-    parts = message.text.split()
-    symbol = parts[1] if len(parts) > 1 else "AAPL"
-    bot.send_message(message.chat.id, get_company_overview(symbol))
-
-@bot.message_handler(commands=['insider'])
-def handle_insider(message):
-    parts = message.text.split()
-    symbol = parts[1] if len(parts) > 1 else "AAPL"
-    for msg in get_insider_trades(symbol):
-        bot.send_message(message.chat.id, msg)
-
-@bot.message_handler(commands=['crypto'])
-def handle_crypto(message):
-    parts = message.text.split()
-    symbol = parts[1] if len(parts) > 1 else "BTC"
-    bot.send_message(message.chat.id, get_crypto_price(symbol))
-
-@bot.message_handler(commands=['news'])
-def handle_news(message):
-    parts = message.text.split()
-    symbol = parts[1] if len(parts) > 1 else "AAPL"
-    for msg in get_stock_news(symbol):
-        bot.send_message(message.chat.id, msg)
 
 @bot.message_handler(commands=['price'])
 def price_handler(message):
@@ -697,12 +1100,13 @@ def price_handler(message):
     if len(args) < 2:
         bot.reply_to(message, "💲 Usage: /price <TICKER>")
         return
+    
     ticker = args[1].upper()
-    try:
-        data = yf.Ticker(ticker)
-        price = data.history(period="1d")['Close'][0]
+    price = StockService.get_stock_price(ticker)
+    
+    if price is not None:
         bot.reply_to(message, f"💲 {ticker} price: ${price:.2f}")
-    except Exception as e:
+    else:
         bot.reply_to(message, f"❌ Error fetching price for {ticker}.")
 
 @bot.message_handler(commands=['info'])
@@ -711,13 +1115,13 @@ def info_handler(message):
     if len(args) < 2:
         bot.reply_to(message, "ℹ️ Usage: /info <TICKER>")
         return
+    
     ticker = args[1].upper()
-    try:
-        data = yf.Ticker(ticker)
-        info = data.info
-        summary = info.get('longBusinessSummary', 'No info available.')
-        bot.reply_to(message, f"ℹ️ {ticker} info:\n{summary}")
-    except Exception:
+    info = StockService.get_stock_info(ticker)
+    
+    if info and 'longBusinessSummary' in info:
+        bot.reply_to(message, f"ℹ️ {ticker} info:\n{info['longBusinessSummary']}")
+    else:
         bot.reply_to(message, f"❌ Error fetching info for {ticker}.")
 
 @bot.message_handler(commands=['chart'])
@@ -726,31 +1130,66 @@ def chart_handler(message):
     if len(args) < 2:
         bot.reply_to(message, "📊 Usage: /chart <TICKER> [PERIOD] [INTERVAL]")
         return
+    
     ticker = args[1].upper()
     period = args[2] if len(args) > 2 else "1mo"
     interval = args[3] if len(args) > 3 else "1d"
+    
     valid_periods = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"]
     valid_intervals = ["1m", "2m", "5m", "15m", "30m", "60m", "90m", "1h", "1d", "5d", "1wk", "1mo", "3mo"]
+    
     if period not in valid_periods:
-        bot.reply_to(message, f"❌ Invalid period '{period}'. Valid: {', '.join(valid_periods)}")
+        bot.reply_to(message, f"❌ Invalid period. Valid: {', '.join(valid_periods)}")
         return
     if interval not in valid_intervals:
-        bot.reply_to(message, f"❌ Invalid interval '{interval}'. Valid: {', '.join(valid_intervals)}")
+        bot.reply_to(message, f"❌ Invalid interval. Valid: {', '.join(valid_intervals)}")
         return
-    try:
-        data = yf.Ticker(ticker).history(period=period, interval=interval)
-        if data.empty:
-            bot.reply_to(message, "❌ No data found for this period/interval.")
-            return
-        plt.figure(figsize=(10,4))
-        data['Close'].plot(title=f"{ticker} Close Price")
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png')
-        buf.seek(0)
-        plt.close()
-        bot.send_photo(message.chat.id, buf, caption=f"📊 {ticker} Chart ({period}, {interval})")
-    except Exception:
+    
+    chart = StockService.generate_stock_chart(ticker, period, interval)
+    if chart:
+        bot.send_photo(message.chat.id, chart, caption=f"📊 {ticker} Chart ({period}, {interval})")
+    else:
         bot.reply_to(message, "❌ Error generating chart.")
+
+@bot.message_handler(commands=['graph'])
+def graph_handler(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "📈 Usage: /graph <TICKER> [PERIOD] [RSI_PERIOD]")
+        return
+    
+    ticker = args[1].upper()
+    period = args[2] if len(args) > 2 else "1mo"
+    rsi_period = args[3] if len(args) > 3 else 14
+    
+    try:
+        rsi_period = int(rsi_period)
+        if rsi_period < 5 or rsi_period > 30:
+            raise ValueError("RSI period out of range")
+    except ValueError:
+        bot.reply_to(message, "❌ RSI period must be between 5 and 30")
+        return
+    
+    chart = StockService.generate_advanced_chart(ticker, period, rsi_period)
+    if chart:
+        bot.send_photo(message.chat.id, chart, caption=f"📈 {ticker} Advanced Chart ({period}, RSI {rsi_period})")
+    else:
+        bot.reply_to(message, "❌ Error generating advanced chart.")
+
+@bot.message_handler(commands=['crypto'])
+def crypto_handler(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "💰 Usage: /crypto <SYMBOL>")
+        return
+    
+    symbol = args[1].upper()
+    price = StockService.get_crypto_price(symbol)
+    
+    if price is not None:
+        bot.reply_to(message, f"💰 {symbol} price: ${price:.2f}")
+    else:
+        bot.reply_to(message, f"❌ Error fetching price for {symbol}.")
 
 @bot.message_handler(commands=['sentiment'])
 def sentiment_handler(message):
@@ -758,15 +1197,19 @@ def sentiment_handler(message):
     if not text:
         bot.reply_to(message, "💬 Usage: /sentiment <text>")
         return
-    try:
-        analyzer = SentimentIntensityAnalyzer()
-        vs = analyzer.polarity_scores(text)
-        bot.reply_to(
-            message,
-            f"💬 Sentiment for:\n{text}\n\n"
-            f"Positive: {vs['pos']}\nNeutral: {vs['neu']}\nNegative: {vs['neg']}\nCompound: {vs['compound']}"
+    
+    sentiment = StockService.analyze_sentiment(text)
+    if sentiment:
+        response = (
+            f"💬 Sentiment analysis:\n\n"
+            f"Text: {text[:200]}...\n\n"
+            f"Positive: {sentiment['pos']:.2f}\n"
+            f"Neutral: {sentiment['neu']:.2f}\n"
+            f"Negative: {sentiment['neg']:.2f}\n"
+            f"Compound: {sentiment['compound']:.2f}"
         )
-    except Exception:
+        bot.reply_to(message, response)
+    else:
         bot.reply_to(message, "❌ Error analyzing sentiment.")
 
 @bot.message_handler(commands=['tweets'])
@@ -775,518 +1218,442 @@ def tweets_handler(message):
     if not query:
         bot.reply_to(message, "🐦 Usage: /tweets <query>")
         return
-    entries = get_tweets_for_query(query)
+    
+    entries = TwitterService.get_tweets_for_query(query)
     if not entries:
         bot.reply_to(message, "🐦 No tweets found.")
     else:
-        for entry in entries:
-            send_tweet_with_image(message.chat.id, entry, f"🐦 {query}:")
+        for entry in entries[:5]:  # Limit to 5 tweets
+            AutoscanService.send_tweet_with_image(message.chat.id, entry, f"🐦 Search: {query}")
 
-@bot.message_handler(commands=['add'])
-def add_handler(message):
-    args = message.text.split()
-    if len(args) < 2 or not args[1].startswith('@'):
-        bot.reply_to(message, "➕ Usage: /add @username")
-        return
-    username = args[1][1:]
-    session = SessionLocal()
-    exists = session.query(Tracked).filter_by(chat_id=message.chat.id, username=username).first()
-    if exists:
-        bot.reply_to(message, f"➕ @{username} is already tracked.")
-    else:
-        tracked = Tracked(chat_id=message.chat.id, username=username)
-        session.add(tracked)
-        session.commit()
-        bot.reply_to(message, f"➕ Now tracking @{username}.")
-    session.close()
-
-@bot.message_handler(commands=['remove'])
-def remove_handler(message):
-    args = message.text.split()
-    if len(args) < 2 or not args[1].startswith('@'):
-        bot.reply_to(message, "➖ Usage: /remove @username")
-        return
-    username = args[1][1:]
-    session = SessionLocal()
-    count = session.query(Tracked).filter_by(chat_id=message.chat.id, username=username).delete()
-    session.commit()
-    if count:
-        bot.reply_to(message, f"➖ Stopped tracking @{username}.")
-    else:
-        bot.reply_to(message, f"➖ @{username} was not being tracked.")
-    session.close()
-
-@bot.message_handler(commands=['list'])
-def list_handler(message):
-    session = SessionLocal()
-    users = session.query(Tracked).filter_by(chat_id=message.chat.id).all()
-    if users:
-        bot.reply_to(message, "📋 Tracked Twitter accounts:\n" + "\n".join([f"@{u.username}" for u in users]))
-    else:
-        bot.reply_to(message, "📋 No Twitter accounts tracked.")
-    session.close()
-
-@bot.message_handler(commands=['clear'])
-def clear_handler(message):
-    session = SessionLocal()
-    count = session.query(Tracked).filter_by(chat_id=message.chat.id).delete()
-    session.commit()
-    bot.reply_to(message, f"🧹 Removed {count} tracked Twitter accounts.")
-    session.close()
-
-@bot.message_handler(commands=['cleardb'])
-def cleardb_handler(message):
-    session = SessionLocal()
-    session.query(Tracked).filter_by(chat_id=message.chat.id).delete()
-    session.query(Keyword).filter_by(chat_id=message.chat.id).delete()
-    session.query(Alert).filter_by(chat_id=message.chat.id).delete()
-    session.query(Portfolio).filter_by(chat_id=message.chat.id).delete()
-    session.commit()
-    bot.reply_to(message, "🗑️ All your bot data has been erased. This cannot be undone.")
-    session.close()
-
-@bot.message_handler(commands=['addkeyword'])
-def addkeyword_handler(message):
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "➕ Usage: /addkeyword word")
-        return
-    word = args[1]
-    session = SessionLocal()
-    exists = session.query(Keyword).filter_by(chat_id=message.chat.id, keyword=word).first()
-    if exists:
-        bot.reply_to(message, f"➕ '{word}' already tracked.")
-    else:
-        keyword = Keyword(chat_id=message.chat.id, keyword=word)
-        session.add(keyword)
-        session.commit()
-        bot.reply_to(message, f"➕ Now tracking keyword '{word}'.")
-    session.close()
-
-@bot.message_handler(commands=['removekeyword'])
-def removekeyword_handler(message):
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "➖ Usage: /removekeyword word")
-        return
-    word = args[1]
-    session = SessionLocal()
-    count = session.query(Keyword).filter_by(chat_id=message.chat.id, keyword=word).delete()
-    session.commit()
-    if count:
-        bot.reply_to(message, f"➖ Removed keyword '{word}'.")
-    else:
-        bot.reply_to(message, f"➖ Keyword '{word}' was not tracked.")
-    session.close()
-
-@bot.message_handler(commands=['listkeywords'])
-def listkeywords_handler(message):
-    session = SessionLocal()
-    keywords = session.query(Keyword).filter_by(chat_id=message.chat.id).all()
-    if keywords:
-        bot.reply_to(message, "📋 Tracked keywords:\n" + "\n".join([k.keyword for k in keywords]))
-    else:
-        bot.reply_to(message, "📋 No keywords tracked.")
-    session.close()
-
-@bot.message_handler(commands=['graph'])
-def graph_handler(message):
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "📈 Usage: /graph <TICKER> [PERIOD] [RSI_PERIOD]")
-        return
-
-    ticker = args[1].upper()
-    period = args[2] if len(args) > 2 else "3mo"
-    rsi_period = int(args[3]) if len(args) > 3 else 14
-
-    valid_periods = [
-        "1d", "5d", "1mo", "3mo", "6mo",
-        "1y", "2y", "5y", "10y", "ytd", "max"
-    ]
-
-    if period not in valid_periods:
-        bot.reply_to(message, f"❌ Invalid period '{period}'. Valid: {', '.join(valid_periods)}")
-        return
-
-    # Try yfinance
-    try:
-        data = yf.Ticker(ticker).history(period=period, interval="1d")
-        if data.empty:
-            raise Exception("No data from yfinance.")
-    except Exception:
-        # Fallback to Alpha Vantage
-        bot.reply_to(message, "🔄 yfinance failed, trying Alpha Vantage...")
-        ALPHA_KEY = os.getenv("ALPHA_VANTAGE_KEY")
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY_ADJUSTED&symbol={ticker}&apikey={ALPHA_KEY}&outputsize=compact"
-        r = requests.get(url)
-        r.raise_for_status()
-        json_data = r.json()
-        time_series = json_data.get("Time Series (Daily)")
-        if not time_series:
-            bot.reply_to(message, "❌ Alpha Vantage returned no data.")
-            return
-        df = pd.DataFrame.from_dict(time_series, orient="index", dtype=float)
-        df = df.rename(columns={
-            "1. open": "Open",
-            "2. high": "High",
-            "3. low": "Low",
-            "4. close": "Close",
-            "6. volume": "Volume"
-        })
-        df.index = pd.to_datetime(df.index)
-        data = df.sort_index()
-
-    # Calculate moving averages
-    data["SMA20"] = data["Close"].rolling(window=20).mean()
-    data["EMA20"] = data["Close"].ewm(span=20, adjust=False).mean()
-
-    # Calculate Bollinger Bands
-    rolling_mean = data["Close"].rolling(window=20).mean()
-    rolling_std = data["Close"].rolling(window=20).std()
-    data["BB_upper"] = rolling_mean + (2 * rolling_std)
-    data["BB_lower"] = rolling_mean - (2 * rolling_std)
-
-    # Calculate RSI
-    delta = data["Close"].diff()
-    gain = delta.clip(lower=0)
-    loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(window=rsi_period).mean()
-    avg_loss = loss.rolling(window=rsi_period).mean()
-    rs = avg_gain / avg_loss
-    data["RSI"] = 100 - (100 / (1 + rs))
-
-    # Create additional plots
-    apds = [
-        mpf.make_addplot(data["SMA20"], color='blue', width=1),
-        mpf.make_addplot(data["EMA20"], color='purple', width=1),
-        mpf.make_addplot(data["BB_upper"], color='grey', linestyle='--'),
-        mpf.make_addplot(data["BB_lower"], color='grey', linestyle='--'),
-    ]
-
-    # Create candlestick & volume figure
-    fig, axes = mpf.plot(
-        data,
-        type='candle',
-        volume=True,
-        addplot=apds,
-        returnfig=True,
-        figsize=(12,8),
-        style='yahoo',
-        title=f"{ticker} Price, SMA, EMA, BB, Volume"
-    )
-
-    # RSI subplot below
-    ax_rsi = fig.add_axes([0.1, 0.05, 0.8, 0.2])
-    ax_rsi.plot(data.index, data["RSI"], label=f'RSI ({rsi_period})', color='orange')
-    ax_rsi.axhline(70, color='red', linestyle='--')
-    ax_rsi.axhline(30, color='green', linestyle='--')
-    ax_rsi.set_ylim(0, 100)
-    ax_rsi.set_ylabel("RSI")
-    ax_rsi.grid(True)
-    ax_rsi.legend()
-
-    # Save figure to buffer
-    buf = io.BytesIO()
-    plt.tight_layout()
-    fig.savefig(buf, format="png")
-    buf.seek(0)
-    plt.close(fig)
-
-    bot.send_photo(message.chat.id, buf, caption=f"📈 {ticker} Candlestick Chart with SMA, EMA, Bollinger Bands, Volume, RSI ({rsi_period})")
-
-def clean_tweet_text(text):
-    """Remove unwanted artifacts from tweets"""
-    import re
-    # Remove "R to @user:" patterns
-    text = re.sub(r'R to @\w+:', '', text)
-    # Remove standalone numbers/dates (like "3/2025")
-    text = re.sub(r'\b\d+[/-]\d+\b', '', text)
-    # Remove multiple spaces
-    text = ' '.join(text.split())
-    return text.strip()
-
-@bot.message_handler(commands=['alert'])
-def alert_handler(message):
-    args = message.text.split()
-    if len(args) < 4:
-        bot.reply_to(message, "🔔 Usage: /alert TICKER <ABOVE|BELOW> <PRICE>")
-        return
-    ticker = args[1].upper()
-    direction = args[2].upper()
-    try:
-        price = float(args[3])
-    except ValueError:
-        bot.reply_to(message, "🔔 Invalid price.")
-        return
-    if direction not in ("ABOVE", "BELOW"):
-        bot.reply_to(message, "🔔 Direction must be ABOVE or BELOW.")
-        return
-    session = SessionLocal()
-    alert = Alert(chat_id=message.chat.id, ticker=ticker, direction=direction, price=price)
-    session.add(alert)
-    session.commit()
-    bot.reply_to(message, f"🔔 Alert set: {ticker} {direction} ${price:.2f}")
-    session.close()
-
-@bot.message_handler(commands=['listalerts'])
-def listalerts_handler(message):
-    session = SessionLocal()
-    alerts = session.query(Alert).filter_by(chat_id=message.chat.id).all()
-    if alerts:
-        lines = [f"{a.id}: {a.ticker} {a.direction} ${a.price:.2f}" for a in alerts]
-        bot.reply_to(message, "📋 Your alerts:\n" + "\n".join(lines))
-    else:
-        bot.reply_to(message, "📋 No alerts set.")
-    session.close()
-
-@bot.message_handler(commands=['removealert'])
-def removealert_handler(message):
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "❌ Usage: /removealert ID")
-        return
-    try:
-        alert_id = int(args[1])
-    except ValueError:
-        bot.reply_to(message, "❌ Invalid alert ID.")
-        return
-    session = SessionLocal()
-    count = session.query(Alert).filter_by(chat_id=message.chat.id, id=alert_id).delete()
-    session.commit()
-    if count:
-        bot.reply_to(message, f"❌ Alert {alert_id} removed.")
-    else:
-        bot.reply_to(message, f"❌ No alert with ID {alert_id}.")
-    session.close()
-
+# --- Portfolio Command Handlers ---
 @bot.message_handler(commands=['addstock'])
 def addstock_handler(message):
     args = message.text.split()
-    if len(args) < 4:
-        bot.reply_to(message, "💰 Usage: /addstock TICKER QTY PRICE")
+    if len(args) != 4:
+        bot.reply_to(message, "💼 Usage: /addstock <TICKER> <QTY> <PRICE>")
         return
+    
     ticker = args[1].upper()
     try:
         qty = float(args[2])
         price = float(args[3])
     except ValueError:
-        bot.reply_to(message, "💰 Invalid quantity or price.")
+        bot.reply_to(message, "💼 QTY and PRICE must be numbers.")
         return
-    session = SessionLocal()
-    entry = Portfolio(chat_id=message.chat.id, ticker=ticker, qty=qty, price=price)
-    session.add(entry)
-    session.commit()
-    bot.reply_to(message, f"💰 Added {qty} {ticker} at ${price:.2f} to portfolio.")
-    session.close()
+    
+    if PortfolioService.add_stock(message.chat.id, ticker, qty, price):
+        bot.reply_to(message, f"💼 Added {qty} {ticker} at ${price:.2f}.")
+    else:
+        bot.reply_to(message, f"❌ Error adding {ticker} to portfolio.")
 
 @bot.message_handler(commands=['removestock'])
 def removestock_handler(message):
     args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "🗑️ Usage: /removestock TICKER")
+    if len(args) != 2:
+        bot.reply_to(message, "💼 Usage: /removestock <TICKER>")
         return
+    
     ticker = args[1].upper()
-    session = SessionLocal()
-    count = session.query(Portfolio).filter_by(chat_id=message.chat.id, ticker=ticker).delete()
-    session.commit()
-    if count:
-        bot.reply_to(message, f"🗑️ Removed {ticker} from portfolio.")
+    if PortfolioService.remove_stock(message.chat.id, ticker):
+        bot.reply_to(message, f"💼 Removed {ticker} from portfolio.")
     else:
-        bot.reply_to(message, f"🗑️ {ticker} not found in portfolio.")
-    session.close()
+        bot.reply_to(message, f"💼 {ticker} not found in portfolio.")
 
 @bot.message_handler(commands=['viewportfolio'])
 def viewportfolio_handler(message):
-    session = SessionLocal()
-    entries = session.query(Portfolio).filter_by(chat_id=message.chat.id).all()
-    if not entries:
-        bot.reply_to(message, "📊 Portfolio is empty.")
-        session.close()
+    stocks = PortfolioService.get_portfolio(message.chat.id)
+    if not stocks:
+        bot.reply_to(message, "💼 Your portfolio is empty.")
         return
-    lines = []
-    total = 0.0
-    for entry in entries:
-        lines.append(f"{entry.ticker}: {entry.qty} @ ${entry.price:.2f}")
-        total += entry.qty * entry.price
-    bot.reply_to(message, "📊 Your portfolio:\n" + "\n".join(lines) + f"\nTotal invested: ${total:.2f}")
-    session.close()
     
-@bot.message_handler(commands=['ai', 'gpt', 'gemini'])
-def handle_gemini(message):
-    user_input = message.text.partition(" ")[2]
-    if not user_input:
-        bot.reply_to(message, "Please provide a prompt after /ai.")
-        return
-
-    bot.reply_to(message, "💡 Thinking...")
-
-    # Azure OpenAI (new API)
-    try:
-        client = openai.AzureOpenAI(
-            api_key=os.getenv("AZURE_API_KEY"),
-            api_version=os.getenv("AZURE_API_VERSION"),
-            azure_endpoint=os.getenv("AZURE_ENDPOINT"),
+    portfolio = PortfolioService.calculate_portfolio_value(stocks)
+    response = ["💼 Your Portfolio:"]
+    
+    for holding in portfolio['holdings']:
+        response.append(
+            f"{holding['qty']} {holding['ticker']} @ ${holding['price']:.2f} = ${holding['value']:.2f}"
         )
-        response = client.chat.completions.create(
-            model=os.getenv("AZURE_DEPLOYMENT"),
-            messages=[{"role": "user", "content": user_input}],
-            max_tokens=256,
-            temperature=0.7
-        )
-        bot.reply_to(message, response.choices[0].message.content)
+    
+    response.append(f"\nTotal Value: ${portfolio['total']:.2f}")
+    bot.reply_to(message, "\n".join(response))
+
+# --- Alert Command Handlers ---
+@bot.message_handler(commands=['alert'])
+def alert_handler(message):
+    args = message.text.split()
+    if len(args) != 4:
+        bot.reply_to(message, "🔔 Usage: /alert <TICKER> ABOVE|BELOW <PRICE>")
         return
-    except Exception as e:
-        print("Azure OpenAI failed:", e)
-
-    # Gemini fallback (code unchanged)
+    
+    ticker = args[1].upper()
+    direction = args[2].upper()
     try:
-        response = gemini_model.generate_content(user_input)
-        bot.reply_to(message, response.text)
+        price = float(args[3])
+    except ValueError:
+        bot.reply_to(message, "🔔 Price must be a number.")
         return
-    except Exception as ge:
-        print("Gemini failed:", ge)
+    
+    if direction not in ("ABOVE", "BELOW"):
+        bot.reply_to(message, "🔔 Direction must be ABOVE or BELOW.")
+        return
+    
+    if AlertService.add_alert(message.chat.id, ticker, direction, price):
+        bot.reply_to(message, f"🔔 Alert set for {ticker} {direction} ${price:.2f}")
+    else:
+        bot.reply_to(message, "❌ Error setting alert.")
 
-    # HuggingFace fallback
+@bot.message_handler(commands=['listalerts'])
+def listalerts_handler(message):
+    alerts = AlertService.get_alerts(message.chat.id)
+    if not alerts:
+        bot.reply_to(message, "🔔 No alerts set.")
+        return
+    
+    response = ["🔔 Your Alerts:"]
+    for alert in alerts:
+        response.append(f"ID:{alert.id} {alert.ticker} {alert.direction} ${alert.price:.2f}")
+    
+    bot.reply_to(message, "\n".join(response))
+
+@bot.message_handler(commands=['removealert'])
+def removealert_handler(message):
+    args = message.text.split()
+    if len(args) != 2:
+        bot.reply_to(message, "❌ Usage: /removealert <ID>")
+        return
+    
     try:
-        hf_output = huggingface_generate(user_input)
-        bot.reply_to(message, hf_output)
-    except Exception as he:
-        bot.reply_to(message, "All AI services are currently unavailable. Try again later.")
-        
-@bot.message_handler(commands=['setinterval'])
-def setinterval_handler(message):
-    bot.reply_to(message, "⏱️ Setinterval is not yet implemented. (Will set scan interval for alerts, minimum 60s)")
+        alert_id = int(args[1])
+    except ValueError:
+        bot.reply_to(message, "❌ Alert ID must be a number.")
+        return
+    
+    if AlertService.remove_alert(message.chat.id, alert_id):
+        bot.reply_to(message, f"❌ Removed alert ID {alert_id}.")
+    else:
+        bot.reply_to(message, f"❌ No alert found with ID {alert_id}.")
 
-@bot.message_handler(commands=['setquiet'])
-def setquiet_handler(message):
-    bot.reply_to(message, "🤫 Setquiet is not yet implemented. (Will set quiet hours for notifications)")
+# --- Twitter Account Command Handlers ---
+@bot.message_handler(commands=['add'])
+def add_account_handler(message):
+    args = message.text.split()
+    if len(args) != 2 or not args[1].startswith('@'):
+        bot.reply_to(message, "🐦 Usage: /add @username")
+        return
+    
+    username = args[1][1:]  # Remove @
+    if TwitterAccountService.add_account(message.chat.id, username):
+        bot.reply_to(message, f"🐦 Now tracking @{username}")
+    else:
+        bot.reply_to(message, f"🐦 Already tracking @{username}")
 
-@bot.message_handler(commands=['settimezone'])
-def settimezone_handler(message):
-    bot.reply_to(message, "🗺️ Settimezone is not yet implemented. (Will set your timezone for reports)")
+@bot.message_handler(commands=['remove'])
+def remove_account_handler(message):
+    args = message.text.split()
+    if len(args) != 2 or not args[1].startswith('@'):
+        bot.reply_to(message, "🐦 Usage: /remove @username")
+        return
+    
+    username = args[1][1:]  # Remove @
+    if TwitterAccountService.remove_account(message.chat.id, username):
+        bot.reply_to(message, f"🐦 Stopped tracking @{username}")
+    else:
+        bot.reply_to(message, f"🐦 @{username} wasn't being tracked")
 
-@bot.message_handler(commands=['setschedule'])
-def setschedule_handler(message):
-    bot.reply_to(message, "🗓️ Setschedule is not yet implemented. (Will schedule daily/weekly reports)")
+@bot.message_handler(commands=['list'])
+def list_accounts_handler(message):
+    accounts = TwitterAccountService.get_accounts(message.chat.id)
+    if not accounts:
+        bot.reply_to(message, "🐦 No accounts being tracked.")
+        return
+    
+    response = "🐦 Tracked Accounts:\n" + "\n".join([f"• @{username}" for username in accounts])
+    bot.reply_to(message, response)
 
-@bot.message_handler(commands=['mysettings'])
-def mysettings_handler(message):
-    bot.reply_to(message, "⚙️ Mysettings is not yet implemented. (Will show your settings)")
-
-@bot.message_handler(commands=['status'])
-def status_handler(message):
-    bot.reply_to(message, "🚦 Status is not yet implemented. (Will show bot status)")
-
-@bot.message_handler(commands=['mute'])
-def mute_handler(message):
-    bot.reply_to(message, "🔇 Mute is not yet implemented. (Will mute notifications for a user)")
-
-@bot.message_handler(commands=['unmute'])
-def unmute_handler(message):
-    bot.reply_to(message, "🔊 Unmute is not yet implemented. (Will unmute notifications for a user)")
+@bot.message_handler(commands=['clear'])
+def clear_accounts_handler(message):
+    count = TwitterAccountService.clear_accounts(message.chat.id)
+    bot.reply_to(message, f"🐦 Cleared {count} tracked accounts.")
 
 @bot.message_handler(commands=['last'])
-def last_handler(message):
+def last_tweet_handler(message):
     args = message.text.split()
     if len(args) < 2 or not args[1].startswith('@'):
-        bot.reply_to(message, "Usage: /last @username")
+        bot.reply_to(message, "🕓 Usage: /last @username")
         return
+    
     username = args[1][1:]
-    entry = get_latest_tweet(username)
-    if entry:
-        send_tweet_with_image(message.chat.id, entry, f"🐦 Last tweet from @{username}:")
+    entry = TwitterService.get_latest_tweet(username)
+    if not entry:
+        bot.reply_to(message, f"🕓 No tweets found for @{username}.")
     else:
-        bot.reply_to(message, f"❌ Could not retrieve tweets for @{username}. (Account may be protected, rate-limited, or unavailable.)")
+        AutoscanService.send_tweet_with_image(
+            message.chat.id, 
+            entry, 
+            f"🕓 Latest from @{username}:"
+        )
 
 @bot.message_handler(commands=['top'])
-def top_handler(message):
+def top_tweets_handler(message):
     args = message.text.split()
-    limit = 5
+    n = 3
     username = None
-    if len(args) > 1:
-        if args[1].startswith('@'):
-            username = args[1][1:]
-        else:
-            try:
-                limit = int(args[1])
-                if len(args) > 2 and args[2].startswith('@'):
-                    username = args[2][1:]
-            except ValueError:
-                if args[1].startswith('@'):
-                    username = args[1][1:]
-    session = SessionLocal()
-    if username:
-        users = session.query(Tracked).filter_by(chat_id=message.chat.id, username=username).all()
-    else:
-        users = session.query(Tracked).filter_by(chat_id=message.chat.id).all()
-    session.close()
-    if not users:
-        bot.reply_to(message, "📋 No Twitter accounts tracked." if not username else f"📋 @{username} is not tracked.")
+    
+    for arg in args[1:]:
+        if arg.isdigit():
+            n = min(int(arg), 10)  # Limit to 10 tweets
+        elif arg.startswith('@'):
+            username = arg[1:]
+    
+    if not username:
+        bot.reply_to(message, "🏆 Usage: /top [N] @username")
         return
-    tweets = []
-    for user in users:
-        user_tweets = get_twitter_rss(user.username)
-        if user_tweets:
-            tweets.extend([(user.username, e) for e in user_tweets[:limit]])
-    tweets = [(u, e) for u, e in tweets if hasattr(e, "published_parsed")]
-    tweets.sort(key=lambda x: x[1].published_parsed, reverse=True)
+    
+    tweets = TwitterService.get_twitter_rss(username)
     if not tweets:
-        bot.reply_to(message, "🐦 No recent tweets found.")
-    else:
-        for u, e in tweets[:limit]:
-            send_tweet_with_image(message.chat.id, e, f"🐦 @{u}:")
-
-@bot.message_handler(commands=['trending'])
-def trending_handler(message):
-    bot.reply_to(message, "🔥 Trending is not yet implemented. (Will show top trending hashtags)")
-
-@bot.message_handler(commands=['export'])
-def export_handler(message):
-    bot.reply_to(message, "📤 Export is not yet implemented. (Will export tracked accounts/keywords)")
-
-@bot.message_handler(commands=['import'])
-def import_handler(message):
-    bot.reply_to(message, "📥 Import is not yet implemented. (Will import tracked accounts/keywords from CSV)")
-
-@bot.message_handler(commands=['menu'])
-def handle_menu(message):
-    try:
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("📈 Price", callback_data="menu_price"),
-            types.InlineKeyboardButton("💼 Portfolio", callback_data="menu_portfolio"),
-            types.InlineKeyboardButton("🐦 Twitter", callback_data="menu_twitter"),
-            types.InlineKeyboardButton("🔍 Keywords", callback_data="menu_keywords"),
-            types.InlineKeyboardButton("🧠 AI Chat", callback_data="menu_ai"),
-            types.InlineKeyboardButton("⚙️ Autoscan", callback_data="menu_autoscan")
+        bot.reply_to(message, f"🏆 No tweets found for @{username}.")
+        return
+    
+    for entry in tweets[:n]:
+        AutoscanService.send_tweet_with_image(
+            message.chat.id, 
+            entry, 
+            f"🏆 Top from @{username}:"
         )
-        bot.send_message(message.chat.id, "Choose an option:", reply_markup=markup)
-    except Exception as e:  # Catch all errors, not just NameError
-        bot.reply_to(message, "⚠️ Menu failed to load. Please try again.")
-        print(f"Menu Error: {str(e)}")
+
+# --- Keyword Command Handlers ---
+@bot.message_handler(commands=['addkeyword'])
+def add_keyword_handler(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "🔍 Usage: /addkeyword <word>")
+        return
+    
+    keyword = " ".join(args[1:])
+    if KeywordService.add_keyword(message.chat.id, keyword):
+        bot.reply_to(message, f"🔍 Now tracking keyword: {keyword}")
+    else:
+        bot.reply_to(message, f"🔍 Already tracking keyword: {keyword}")
+
+@bot.message_handler(commands=['removekeyword'])
+def remove_keyword_handler(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "🔍 Usage: /removekeyword <word>")
+        return
+    
+    keyword = " ".join(args[1:])
+    if KeywordService.remove_keyword(message.chat.id, keyword):
+        bot.reply_to(message, f"🔍 Stopped tracking keyword: {keyword}")
+    else:
+        bot.reply_to(message, f"🔍 Wasn't tracking keyword: {keyword}")
+
+@bot.message_handler(commands=['listkeywords'])
+def list_keywords_handler(message):
+    keywords = KeywordService.get_keywords(message.chat.id)
+    if not keywords:
+        bot.reply_to(message, "🔍 No keywords being tracked.")
+        return
+    
+    response = "🔍 Tracked Keywords:\n" + "\n".join([f"• {keyword}" for keyword in keywords])
+    bot.reply_to(message, response)
+
+@bot.message_handler(commands=['clearkeywords'])
+def clear_keywords_handler(message):
+    count = KeywordService.clear_keywords(message.chat.id)
+    bot.reply_to(message, f"🔍 Cleared {count} tracked keywords.")
+
+# --- AI Command Handlers ---
+@bot.message_handler(commands=['ai', 'gpt', 'gemini'])
+def ai_handler(message):
+    user_input = message.text.partition(" ")[2]
+    if not user_input:
+        bot.reply_to(message, "🧠 Please provide a prompt after /ai.")
+        return
+    
+    bot.reply_to(message, "💡 Thinking...")
+    response = AIService.generate_response(user_input)
+    bot.reply_to(message, response)
+
+# --- Autoscan Command Handlers ---
+@bot.message_handler(commands=['pause', 'pauseautoscan'])
+def pause_autoscan_handler(message):
+    if UserSettingsService.update_settings(message.chat.id, autoscan_paused=True):
+        bot.reply_to(message, "⏸️ Autoscan paused.")
+    else:
+        bot.reply_to(message, "❌ Error pausing autoscan.")
+
+@bot.message_handler(commands=['resume', 'resumeautoscan'])
+def resume_autoscan_handler(message):
+    if UserSettingsService.update_settings(message.chat.id, autoscan_paused=False):
+        bot.reply_to(message, "▶️ Autoscan resumed.")
+    else:
+        bot.reply_to(message, "❌ Error resuming autoscan.")
+
+@bot.message_handler(commands=['toggleautoscan'])
+def toggle_autoscan_handler(message):
+    paused = UserSettingsService.toggle_autoscan(message.chat.id)
+    if paused is not None:
+        if paused:
+            bot.reply_to(message, "⏸️ Autoscan paused.")
+        else:
+            bot.reply_to(message, "▶️ Autoscan resumed.")
+    else:
+        bot.reply_to(message, "❌ Error toggling autoscan.")
+
+@bot.message_handler(commands=['scanmode'])
+def scanmode_handler(message):
+    args = message.text.split()
+    if len(args) < 2 or args[1].lower() not in ("all", "accounts", "keywords"):
+        bot.reply_to(message, "🛠️ Usage: /scanmode <all|accounts|keywords>")
+        return
+    
+    mode = args[1].lower()
+    if mode == "all":
+        settings = {'scan_accounts': True, 'scan_keywords': True}
+    elif mode == "accounts":
+        settings = {'scan_accounts': True, 'scan_keywords': False}
+    else:  # keywords
+        settings = {'scan_accounts': False, 'scan_keywords': True}
+    
+    if UserSettingsService.update_settings(message.chat.id, **settings):
+        bot.reply_to(message, f"🛠️ Scan mode set to {mode}.")
+    else:
+        bot.reply_to(message, "❌ Error updating scan mode.")
+
+@bot.message_handler(commands=['setscandepth'])
+def setscandepth_handler(message):
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "🔢 Usage: /setscandepth <number_of_tweets>")
+        return
+    
+    try:
+        depth = int(args[1])
+        if depth < 1 or depth > 20:
+            raise ValueError("Depth out of range")
+    except ValueError:
+        bot.reply_to(message, "🔢 Scan depth must be between 1 and 20.")
+        return
+    
+    if UserSettingsService.update_settings(message.chat.id, scan_depth=depth):
+        bot.reply_to(message, f"🔢 Scan depth set to {depth}.")
+    else:
+        bot.reply_to(message, "❌ Error setting scan depth.")
+
+@bot.message_handler(commands=['myautoscan'])
+def myautoscan_handler(message):
+    settings = UserSettingsService.get_settings(message.chat.id)
+    if not settings:
+        bot.reply_to(message, "⚙️ Error retrieving settings.")
+        return
+    
+    status = "⏸️ Paused" if settings.autoscan_paused else "▶️ Active"
+    mode = []
+    if settings.scan_accounts: mode.append("accounts")
+    if settings.scan_keywords: mode.append("keywords")
+    
+    response = (
+        f"⚙️ Autoscan Settings:\n"
+        f"Status: {status}\n"
+        f"Scan Mode: {', '.join(mode) if mode else 'none'}\n"
+        f"Scan Depth: {settings.scan_depth}"
+    )
+    bot.reply_to(message, response)
+
+# --- Menu and Fallback ---
+@bot.message_handler(commands=['menu'])
+def menu_handler(message):
+    markup = InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        InlineKeyboardButton("📊 Stocks", callback_data="stocks"),
+        InlineKeyboardButton("🐦 Twitter", callback_data="twitter"),
+    )
+    markup.add(
+        InlineKeyboardButton("🔔 Alerts", callback_data="alerts"),
+        InlineKeyboardButton("💼 Portfolio", callback_data="portfolio"),
+    )
+    markup.add(
+        InlineKeyboardButton("🧠 AI", callback_data="ai"),
+        InlineKeyboardButton("⚙️ Settings", callback_data="settings"),
+    )
+    bot.send_message(message.chat.id, "📱 Main Menu:", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: True)
-def handle_menu_callbacks(call):
-    if call.data == "menu_price":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "📈 Use `/price <TICKER>` to check stock prices.\nExample: `/price AAPL`")
-    elif call.data == "menu_portfolio":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "💼 Portfolio commands:\n• /addstock\n• /viewportfolio\n• /removestock")
-    elif call.data == "menu_twitter":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "🐦 Twitter commands:\n• /add @user\n• /list\n• /top\n• /last @user")
-    elif call.data == "menu_keywords":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "🔍 Keyword tracking:\n• /addkeyword <word>\n• /listkeywords\n• /removekeyword")
-    elif call.data == "menu_ai":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "🧠 Ask the AI:\nUse `/gemini <your question>`")
-    elif call.data == "menu_autoscan":
-        bot.answer_callback_query(call.id)
-        bot.send_message(call.message.chat.id, "⚙️ Autoscan commands:\n• /pauseautoscan\n• /resumeautoscan\n• /myautoscan")
- 
+def callback_inline(call):
+    if call.data == "stocks":
+        help_text = (
+            "📊 Stock Commands:\n"
+            "/price <TICKER> - Current price\n"
+            "/info <TICKER> - Company info\n"
+            "/chart <TICKER> - Price chart\n"
+            "/graph <TICKER> - Advanced chart\n"
+            "/news <TICKER> - Latest news"
+        )
+        bot.send_message(call.message.chat.id, help_text)
+    elif call.data == "twitter":
+        help_text = (
+            "🐦 Twitter Commands:\n"
+            "/add @user - Track account\n"
+            "/remove @user - Untrack\n"
+            "/list - Tracked accounts\n"
+            "/last @user - Latest tweet\n"
+            "/top [N] @user - Top tweets\n"
+            "/tweets <query> - Search"
+        )
+        bot.send_message(call.message.chat.id, help_text)
+    elif call.data == "alerts":
+        help_text = (
+            "🔔 Alert Commands:\n"
+            "/alert TICKER ABOVE|BELOW PRICE\n"
+            "/listalerts - View alerts\n"
+            "/removealert ID - Delete alert"
+        )
+        bot.send_message(call.message.chat.id, help_text)
+    elif call.data == "portfolio":
+        help_text = (
+            "💼 Portfolio Commands:\n"
+            "/addstock TICKER QTY PRICE\n"
+            "/removestock TICKER\n"
+            "/viewportfolio - View holdings"
+        )
+        bot.send_message(call.message.chat.id, help_text)
+    elif call.data == "ai":
+        bot.send_message(call.message.chat.id, "🧠 Ask me anything with /ai <prompt>")
+    elif call.data == "settings":
+        help_text = (
+            "⚙️ Autoscan Settings:\n"
+            "/pause - Pause scanning\n"
+            "/resume - Resume scanning\n"
+            "/scanmode - Set scan mode\n"
+            "/setscandepth - Set depth\n"
+            "/myautoscan - View settings"
+        )
+        bot.send_message(call.message.chat.id, help_text)
+    else:
+        bot.send_message(call.message.chat.id, "🤷 Unknown action. Try /help")
+
+@bot.message_handler(func=lambda message: message.text and message.text.startswith("/"))
+def unknown_command_handler(message):
+    bot.reply_to(message, "❓ Unknown command. Use /help to see all available commands.")
+
+# --- Scheduler Setup ---
+scheduler = BackgroundScheduler()
+scheduler.add_job(AutoscanService.run_autoscan, 'interval', minutes=Config.AUTOSCAN_INTERVAL)
+scheduler.add_job(check_alerts_job, 'interval', minutes=1)  # Check alerts every minute
+scheduler.start()
+
+# --- Main Execution ---
 if __name__ == "__main__":
+    # Set webhook on startup
+    try:
+        bot.remove_webhook()
+        time.sleep(1)
+        bot.set_webhook(url=f"{Config.WEBHOOK_URL}/{Config.BOT_TOKEN}")
+    except Exception as e:
+        logger.error(f"Error setting webhook: {e}")
+    
+    # Start Flask app
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
