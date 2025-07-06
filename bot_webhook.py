@@ -34,6 +34,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import re
 from sqlalchemy import Column, Integer, DateTime
+from pymongo.mongo_client import MongoClient
 
 class RateLimiter:
     def __init__(self):
