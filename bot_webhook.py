@@ -20,7 +20,6 @@ from bs4 import BeautifulSoup
 from apscheduler.schedulers.background import BackgroundScheduler
 import google.generativeai as genai
 from google.generativeai import configure, GenerativeModel
-import os
 import telebot
 from alpha import get_stock_price, get_company_overview
 import mplfinance as mpf
@@ -35,6 +34,7 @@ import re
 from sqlalchemy import Column, Integer, DateTime
 from pymongo.mongo_client import MongoClient
 import openai
+from flask import Flask, request
 
 class RateLimiter:
     def __init__(self):
