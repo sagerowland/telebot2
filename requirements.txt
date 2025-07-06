@@ -17,3 +17,4 @@ beautifulsoup4
 apscheduler
 google-generativeai
 regex
+pymongo[srv]
