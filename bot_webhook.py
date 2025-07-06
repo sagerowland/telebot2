@@ -23,7 +23,6 @@ from google.generativeai import configure, GenerativeModel
 import os
 import telebot
 from alpha import get_stock_price, get_company_overview
-from finnhub import get_insider_trades, get_crypto_price, get_stock_news
 import mplfinance as mpf
 import matplotlib.dates as mdates
 import sys
