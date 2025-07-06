@@ -21,7 +21,17 @@ from dotenv import load_dotenv
 from flask import Flask, request
 import telebot
 from telebot.types import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from sqlalchemy import create_engine, Column, BigInteger, String, Float, Integer, Boolean, UniqueConstraint
+from sqlalchemy import (
+    create_engine,
+    Column,
+    BigInteger,
+    String,
+    Float,
+    Integer,
+    Boolean,
+    UniqueConstraint,
+    DateTime  # This was missing in original
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from apscheduler.schedulers.background import BackgroundScheduler
