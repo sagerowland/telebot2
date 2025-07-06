@@ -35,6 +35,7 @@ from collections import defaultdict
 import re
 from sqlalchemy import Column, Integer, DateTime
 from pymongo.mongo_client import MongoClient
+import openai
 
 class RateLimiter:
     def __init__(self):
@@ -195,6 +196,10 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 GEMINI_KEY = os.getenv("GEMINI_KEY")
 HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
+AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
+AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT")
+AZURE_API_VERSION = os.getenv("AZURE_API_VERSION")
+MONGODB_URI = os.getenv("MONGODB_URI")
 
 configure(api_key=GEMINI_KEY)
 
@@ -1082,38 +1087,37 @@ def viewportfolio_handler(message):
 def handle_gemini(message):
     user_input = message.text.partition(" ")[2]
     if not user_input:
-        bot.reply_to(message, "Please provide a prompt after /gemini.")
+        bot.reply_to(message, "Please provide a prompt after /ai.")
         return
 
     bot.reply_to(message, "💡 Thinking...")
 
     try:
-        response = gemini_model.generate_content(user_input)
-        bot.reply_to(message, response.text)
+        # Try Azure OpenAI first
+        openai.api_type = "azure"
+        openai.api_key = AZURE_API_KEY
+        openai.api_base = AZURE_ENDPOINT
+        openai.api_version = AZURE_API_VERSION
+        response = openai.ChatCompletion.create(
+            engine=AZURE_DEPLOYMENT,
+            messages=[{"role": "user", "content": user_input}],
+            max_tokens=256,
+            temperature=0.7
+        )
+        bot.reply_to(message, response['choices'][0]['message']['content'])
     except Exception as e:
-        if "429" in str(e):
-            bot.reply_to(message, "⚠️ Gemini rate limit reached. Switching to Hugging Face...")
-            hf_output = huggingface_generate(user_input)
-            bot.reply_to(message, hf_output)
-        else:
-            bot.reply_to(message, f"Gemini error: {str(e)}")
-        
-def huggingface_generate(prompt):
-    API_URL = "https://api-inference.huggingface.co/models/distilbert/distilgpt2"
-    headers = {"Authorization": f"Bearer {HUGGINGFACE_TOKEN}"}
-    payload = {
-        "inputs": prompt,
-        "parameters": {"max_length": 100}
-    }
-    response = requests.post(API_URL, headers=headers, json=payload)
-    if response.status_code == 200:
-        generated_text = response.json()[0]['generated_text']
-        return generated_text
-    else:
-        print("Hugging Face API ERROR:")
-        print("Status code:", response.status_code)
-        print("Response body:", response.text)
-        return "⚠️ Hugging Face API error. Try again later."
+        print("Azure OpenAI failed:", e)
+        try:
+            # Fallback to Gemini
+            response = gemini_model.generate_content(user_input)
+            bot.reply_to(message, response.text)
+        except Exception as ge:
+            if "429" in str(ge):
+                bot.reply_to(message, "⚠️ Gemini rate limit reached. Switching to Hugging Face...")
+                hf_output = huggingface_generate(user_input)
+                bot.reply_to(message, hf_output)
+            else:
+                bot.reply_to(message, f"Gemini error: {str(ge)}")
         
 @bot.message_handler(commands=['setinterval'])
 def setinterval_handler(message):
