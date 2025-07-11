@@ -21,25 +21,12 @@ from dotenv import load_dotenv
 from flask import Flask, request
 import telebot
 from telebot.types import Update, InlineKeyboardMarkup, InlineKeyboardButton
-from sqlalchemy import (
-    create_engine,
-    Column,
-    BigInteger,
-    String,
-    Float,
-    Integer,
-    Boolean,
-    UniqueConstraint,
-    DateTime  # This was missing in original
-)
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from apscheduler.schedulers.background import BackgroundScheduler
 from pymongo import MongoClient
 import requests
 import openai
 import google.generativeai as genai
 from google.generativeai import configure
+from apscheduler.schedulers.background import BackgroundScheduler
 
 # Configure logging
 logging.basicConfig(
@@ -57,7 +44,7 @@ load_dotenv()
 
 class Config:
     BOT_TOKEN = os.getenv("BOT_TOKEN")
-    DATABASE_URL = os.getenv("DATABASE_URL")
+    MONGODB_URI = os.getenv("MONGODB_URI")
     WEBHOOK_URL = os.getenv("WEBHOOK_URL")
     GEMINI_KEY = os.getenv("GEMINI_KEY")
     HUGGINGFACE_TOKEN = os.getenv("HUGGINGFACE_TOKEN")
@@ -65,7 +52,6 @@ class Config:
     AZURE_ENDPOINT = os.getenv("AZURE_ENDPOINT")
     AZURE_DEPLOYMENT = os.getenv("AZURE_DEPLOYMENT")
     AZURE_API_VERSION = os.getenv("AZURE_API_VERSION")
-    MONGODB_URI = os.getenv("MONGODB_URI")
     MAX_WORKERS = int(os.getenv("MAX_WORKERS", 10))
     RATE_LIMIT = int(os.getenv("RATE_LIMIT", 3))
     RATE_LIMIT_PERIOD = int(os.getenv("RATE_LIMIT_PERIOD", 60))
@@ -76,80 +62,18 @@ app = Flask(__name__)
 bot = telebot.TeleBot(Config.BOT_TOKEN, threaded=False)
 update_lock = Lock()
 
-# --- Database Models ---
-Base = declarative_base()
-
-class Tracked(Base):
-    __tablename__ = 'tracked'
-    id = Column(Integer, primary_key=True)
-    chat_id = Column(BigInteger)
-    username = Column(String)
-
-class Keyword(Base):
-    __tablename__ = 'keywords'
-    id = Column(Integer, primary_key=True)
-    chat_id = Column(BigInteger)
-    keyword = Column(String)
-
-class Alert(Base):
-    __tablename__ = 'alerts'
-    id = Column(Integer, primary_key=True)
-    chat_id = Column(BigInteger)
-    ticker = Column(String)
-    direction = Column(String)
-    price = Column(Float)
-
-class Portfolio(Base):
-    __tablename__ = 'portfolio'
-    id = Column(Integer, primary_key=True)
-    chat_id = Column(BigInteger)
-    ticker = Column(String)
-    qty = Column(Float)
-    price = Column(Float)
-
-class UserSettings(Base):
-    __tablename__ = 'user_settings'
-    chat_id = Column(BigInteger, primary_key=True)
-    autoscan_paused = Column(Boolean, default=False)
-    scan_accounts = Column(Boolean, default=True)
-    scan_keywords = Column(Boolean, default=True)
-    scan_depth = Column(Integer, default=3)
-
-class LastSeenUser(Base):
-    __tablename__ = 'last_seen_user'
-    id = Column(Integer, primary_key=True)
-    chat_id = Column(BigInteger)
-    username = Column(String)
-    tweet_id = Column(String)
-    __table_args__ = (UniqueConstraint('chat_id', 'username', name='uq_user_chat'),)
-
-class LastSeenKeyword(Base):
-    __tablename__ = 'last_seen_keyword'
-    id = Column(Integer, primary_key=True)
-    chat_id = Column(BigInteger)
-    keyword = Column(String)
-    tweet_id = Column(String)
-    __table_args__ = (UniqueConstraint('chat_id', 'keyword', name='uq_keyword_chat'),)
-
-class ProcessedUpdate(Base):
-    __tablename__ = 'processed_updates'
-    update_id = Column(Integer, primary_key=True)
-    processed_at = Column(DateTime, default=datetime.utcnow)
-
-# Initialize database
-engine = create_engine(
-    Config.DATABASE_URL,
-    pool_pre_ping=True,
-    pool_recycle=300,
-    connect_args={"sslmode": "require"}
-)
-SessionLocal = sessionmaker(bind=engine)
-
-Base.metadata.create_all(engine)
-
-# Initialize MongoDB for analytics
+# Initialize MongoDB
 mongo_client = MongoClient(Config.MONGODB_URI)
-analytics_db = mongo_client.get_database("analytics")
+db = mongo_client.get_database("finance_bot")
+
+# Collections
+tracked_col = db["tracked_accounts"]
+keywords_col = db["tracked_keywords"]
+alerts_col = db["price_alerts"]
+portfolio_col = db["user_portfolios"]
+settings_col = db["user_settings"]
+last_seen_col = db["last_seen"]
+processed_updates_col = db["processed_updates"]
 
 # --- Helper Functions ---
 def huggingface_generate(prompt):
@@ -166,7 +90,6 @@ def huggingface_generate(prompt):
 def get_company_overview(symbol):
     """Get company overview from Alpha Vantage"""
     try:
-        # This would be replaced with actual Alpha Vantage API call
         return f"Company overview for {symbol} would appear here from Alpha Vantage"
     except Exception as e:
         logger.error(f"Error getting company overview: {e}")
@@ -175,7 +98,6 @@ def get_company_overview(symbol):
 def get_insider_trades(symbol):
     """Get insider trades for a symbol"""
     try:
-        # This would be replaced with actual insider trading data
         return [f"Insider trading data for {symbol} would appear here"]
     except Exception as e:
         logger.error(f"Error getting insider trades: {e}")
@@ -184,7 +106,6 @@ def get_insider_trades(symbol):
 def get_stock_news(symbol):
     """Get news for a stock"""
     try:
-        # This would be replaced with actual news API call
         return [f"News for {symbol} would appear here"]
     except Exception as e:
         logger.error(f"Error getting stock news: {e}")
@@ -519,55 +440,44 @@ class AIService:
 class PortfolioService:
     @staticmethod
     def add_stock(chat_id, ticker, qty, price):
-        session = SessionLocal()
         try:
-            stock = Portfolio(chat_id=chat_id, ticker=ticker, qty=qty, price=price)
-            session.add(stock)
-            session.commit()
+            portfolio_col.update_one(
+                {"chat_id": chat_id, "ticker": ticker},
+                {"$set": {"qty": qty, "price": price}},
+                upsert=True
+            )
             return True
         except Exception as e:
-            session.rollback()
             logger.error(f"Error adding stock: {e}")
             return False
-        finally:
-            session.close()
     
     @staticmethod
     def remove_stock(chat_id, ticker):
-        session = SessionLocal()
         try:
-            count = session.query(Portfolio).filter_by(chat_id=chat_id, ticker=ticker).delete()
-            session.commit()
-            return count > 0
+            result = portfolio_col.delete_one({"chat_id": chat_id, "ticker": ticker})
+            return result.deleted_count > 0
         except Exception as e:
-            session.rollback()
             logger.error(f"Error removing stock: {e}")
             return False
-        finally:
-            session.close()
     
     @staticmethod
     def get_portfolio(chat_id):
-        session = SessionLocal()
         try:
-            stocks = session.query(Portfolio).filter_by(chat_id=chat_id).all()
-            return stocks
+            return list(portfolio_col.find({"chat_id": chat_id}))
         except Exception as e:
             logger.error(f"Error getting portfolio: {e}")
             return []
-        finally:
-            session.close()
     
     @staticmethod
     def calculate_portfolio_value(stocks):
         total = 0.0
         holdings = []
         for stock in stocks:
-            value = stock.qty * stock.price
+            value = stock['qty'] * stock['price']
             holdings.append({
-                'ticker': stock.ticker,
-                'qty': stock.qty,
-                'price': stock.price,
+                'ticker': stock['ticker'],
+                'qty': stock['qty'],
+                'price': stock['price'],
                 'value': value
             })
             total += value
@@ -580,56 +490,46 @@ class PortfolioService:
 class AlertService:
     @staticmethod
     def add_alert(chat_id, ticker, direction, price):
-        session = SessionLocal()
         try:
-            alert = Alert(chat_id=chat_id, ticker=ticker, direction=direction, price=price)
-            session.add(alert)
-            session.commit()
-            return True
+            alert_id = alerts_col.insert_one({
+                "chat_id": chat_id,
+                "ticker": ticker,
+                "direction": direction,
+                "price": price,
+                "created_at": datetime.utcnow()
+            }).inserted_id
+            return str(alert_id)
         except Exception as e:
-            session.rollback()
             logger.error(f"Error adding alert: {e}")
-            return False
-        finally:
-            session.close()
+            return None
     
     @staticmethod
     def remove_alert(chat_id, alert_id):
-        session = SessionLocal()
         try:
-            count = session.query(Alert).filter_by(chat_id=chat_id, id=alert_id).delete()
-            session.commit()
-            return count > 0
+            result = alerts_col.delete_one({"_id": alert_id, "chat_id": chat_id})
+            return result.deleted_count > 0
         except Exception as e:
-            session.rollback()
             logger.error(f"Error removing alert: {e}")
             return False
-        finally:
-            session.close()
     
     @staticmethod
     def get_alerts(chat_id):
-        session = SessionLocal()
         try:
-            alerts = session.query(Alert).filter_by(chat_id=chat_id).all()
-            return alerts
+            return list(alerts_col.find({"chat_id": chat_id}))
         except Exception as e:
             logger.error(f"Error getting alerts: {e}")
             return []
-        finally:
-            session.close()
     
     @staticmethod
     def check_alerts():
-        session = SessionLocal()
         try:
-            alerts = session.query(Alert).all()
+            alerts = list(alerts_col.find())
             triggered = []
             
             # Group alerts by ticker to minimize API calls
             ticker_alerts = defaultdict(list)
             for alert in alerts:
-                ticker_alerts[alert.ticker].append(alert)
+                ticker_alerts[alert['ticker']].append(alert)
             
             for ticker, alert_list in ticker_alerts.items():
                 try:
@@ -638,9 +538,9 @@ class AlertService:
                         continue
                     
                     for alert in alert_list:
-                        if alert.direction == "ABOVE" and current_price > alert.price:
+                        if alert['direction'] == "ABOVE" and current_price > alert['price']:
                             triggered.append((alert, current_price))
-                        elif alert.direction == "BELOW" and current_price < alert.price:
+                        elif alert['direction'] == "BELOW" and current_price < alert['price']:
                             triggered.append((alert, current_price))
                 except Exception as e:
                     logger.error(f"Error checking alerts for {ticker}: {e}")
@@ -649,200 +549,153 @@ class AlertService:
         except Exception as e:
             logger.error(f"Error checking alerts: {e}")
             return []
-        finally:
-            session.close()
 
 # --- Twitter Account Management ---
 class TwitterAccountService:
     @staticmethod
     def add_account(chat_id, username):
-        session = SessionLocal()
         try:
-            # Remove @ if present
             username = username.lstrip('@')
-            
-            if session.query(Tracked).filter_by(chat_id=chat_id, username=username).first():
+            if tracked_col.find_one({"chat_id": chat_id, "username": username}):
                 return False  # Already exists
             
-            account = Tracked(chat_id=chat_id, username=username)
-            session.add(account)
-            session.commit()
+            tracked_col.insert_one({
+                "chat_id": chat_id,
+                "username": username,
+                "created_at": datetime.utcnow()
+            })
             return True
         except Exception as e:
-            session.rollback()
             logger.error(f"Error adding account: {e}")
             return False
-        finally:
-            session.close()
     
     @staticmethod
     def remove_account(chat_id, username):
-        session = SessionLocal()
         try:
             username = username.lstrip('@')
-            count = session.query(Tracked).filter_by(chat_id=chat_id, username=username).delete()
-            session.commit()
-            return count > 0
+            result = tracked_col.delete_one({"chat_id": chat_id, "username": username})
+            return result.deleted_count > 0
         except Exception as e:
-            session.rollback()
             logger.error(f"Error removing account: {e}")
             return False
-        finally:
-            session.close()
     
     @staticmethod
     def get_accounts(chat_id):
-        session = SessionLocal()
         try:
-            accounts = session.query(Tracked).filter_by(chat_id=chat_id).all()
-            return [account.username for account in accounts]
+            accounts = tracked_col.find({"chat_id": chat_id})
+            return [account['username'] for account in accounts]
         except Exception as e:
             logger.error(f"Error getting accounts: {e}")
             return []
-        finally:
-            session.close()
     
     @staticmethod
     def clear_accounts(chat_id):
-        session = SessionLocal()
         try:
-            count = session.query(Tracked).filter_by(chat_id=chat_id).delete()
-            session.commit()
-            return count
+            result = tracked_col.delete_many({"chat_id": chat_id})
+            return result.deleted_count
         except Exception as e:
-            session.rollback()
             logger.error(f"Error clearing accounts: {e}")
             return 0
-        finally:
-            session.close()
 
 # --- Keyword Tracking ---
 class KeywordService:
     @staticmethod
     def add_keyword(chat_id, keyword):
-        session = SessionLocal()
         try:
-            if session.query(Keyword).filter_by(chat_id=chat_id, keyword=keyword).first():
+            if keywords_col.find_one({"chat_id": chat_id, "keyword": keyword}):
                 return False  # Already exists
             
-            kw = Keyword(chat_id=chat_id, keyword=keyword)
-            session.add(kw)
-            session.commit()
+            keywords_col.insert_one({
+                "chat_id": chat_id,
+                "keyword": keyword,
+                "created_at": datetime.utcnow()
+            })
             return True
         except Exception as e:
-            session.rollback()
             logger.error(f"Error adding keyword: {e}")
             return False
-        finally:
-            session.close()
     
     @staticmethod
     def remove_keyword(chat_id, keyword):
-        session = SessionLocal()
         try:
-            count = session.query(Keyword).filter_by(chat_id=chat_id, keyword=keyword).delete()
-            session.commit()
-            return count > 0
+            result = keywords_col.delete_one({"chat_id": chat_id, "keyword": keyword})
+            return result.deleted_count > 0
         except Exception as e:
-            session.rollback()
             logger.error(f"Error removing keyword: {e}")
             return False
-        finally:
-            session.close()
     
     @staticmethod
     def get_keywords(chat_id):
-        session = SessionLocal()
         try:
-            keywords = session.query(Keyword).filter_by(chat_id=chat_id).all()
-            return [kw.keyword for kw in keywords]
+            keywords = keywords_col.find({"chat_id": chat_id})
+            return [kw['keyword'] for kw in keywords]
         except Exception as e:
             logger.error(f"Error getting keywords: {e}")
             return []
-        finally:
-            session.close()
     
     @staticmethod
     def clear_keywords(chat_id):
-        session = SessionLocal()
         try:
-            count = session.query(Keyword).filter_by(chat_id=chat_id).delete()
-            session.commit()
-            return count
+            result = keywords_col.delete_many({"chat_id": chat_id})
+            return result.deleted_count
         except Exception as e:
-            session.rollback()
             logger.error(f"Error clearing keywords: {e}")
             return 0
-        finally:
-            session.close()
 
 # --- User Settings ---
 class UserSettingsService:
     @staticmethod
     def get_settings(chat_id):
-        session = SessionLocal()
         try:
-            settings = session.query(UserSettings).filter_by(chat_id=chat_id).first()
+            settings = settings_col.find_one({"chat_id": chat_id})
             if not settings:
                 # Create default settings if none exist
-                settings = UserSettings(
-                    chat_id=chat_id,
-                    autoscan_paused=False,
-                    scan_accounts=True,
-                    scan_keywords=True,
-                    scan_depth=3
-                )
-                session.add(settings)
-                session.commit()
+                settings = {
+                    "chat_id": chat_id,
+                    "autoscan_paused": False,
+                    "scan_accounts": True,
+                    "scan_keywords": True,
+                    "scan_depth": 3
+                }
+                settings_col.insert_one(settings)
             return settings
         except Exception as e:
             logger.error(f"Error getting settings: {e}")
             return None
-        finally:
-            session.close()
     
     @staticmethod
     def update_settings(chat_id, **kwargs):
-        session = SessionLocal()
         try:
-            settings = session.query(UserSettings).filter_by(chat_id=chat_id).first()
-            if not settings:
-                settings = UserSettings(chat_id=chat_id)
-                session.add(settings)
-            
-            for key, value in kwargs.items():
-                if hasattr(settings, key):
-                    setattr(settings, key, value)
-            
-            session.commit()
+            settings_col.update_one(
+                {"chat_id": chat_id},
+                {"$set": kwargs},
+                upsert=True
+            )
             return True
         except Exception as e:
-            session.rollback()
             logger.error(f"Error updating settings: {e}")
             return False
-        finally:
-            session.close()
     
     @staticmethod
     def toggle_autoscan(chat_id):
-        session = SessionLocal()
         try:
-            settings = session.query(UserSettings).filter_by(chat_id=chat_id).first()
+            settings = settings_col.find_one({"chat_id": chat_id})
             if not settings:
-                settings = UserSettings(chat_id=chat_id, autoscan_paused=True)
-                session.add(settings)
-                paused = True
-            else:
-                settings.autoscan_paused = not settings.autoscan_paused
-                paused = settings.autoscan_paused
-            session.commit()
-            return paused
+                settings_col.insert_one({
+                    "chat_id": chat_id,
+                    "autoscan_paused": True
+                })
+                return True  # Now paused
+            
+            new_state = not settings.get('autoscan_paused', False)
+            settings_col.update_one(
+                {"chat_id": chat_id},
+                {"$set": {"autoscan_paused": new_state}}
+            )
+            return new_state
         except Exception as e:
-            session.rollback()
             logger.error(f"Error toggling autoscan: {e}")
             return None
-        finally:
-            session.close()
 
 # --- Autoscan Service ---
 class AutoscanService:
@@ -873,44 +726,42 @@ class AutoscanService:
     @staticmethod
     def run_autoscan():
         logger.info("🍀 Starting autoscan with deduplication and rate limiting")
-        session = SessionLocal()
         RATE_LIMIT_PER_RUN = 30
         sent_count = 0
 
         # Get all unique chat IDs that have tracked accounts or keywords
         all_chats = set(
-            [r[0] for r in session.query(Tracked.chat_id).distinct()] +
-            [r[0] for r in session.query(Keyword.chat_id).distinct()]
+            [doc['chat_id'] for doc in tracked_col.distinct("chat_id")] +
+            [doc['chat_id'] for doc in keywords_col.distinct("chat_id")]
         )
         
         for chat_id in all_chats:
             settings = UserSettingsService.get_settings(chat_id)
-            if not settings or settings.autoscan_paused:
+            if not settings or settings.get('autoscan_paused', False):
                 continue
 
             try:
                 # Account autoscan
-                if settings.scan_accounts:
-                    users = session.query(Tracked).filter_by(chat_id=chat_id).all()
+                if settings.get('scan_accounts', True):
+                    users = list(tracked_col.find({"chat_id": chat_id}))
                     for user in users:
                         if sent_count >= RATE_LIMIT_PER_RUN:
                             logger.info("Rate limit reached. Pausing autoscan for this run.")
-                            session.close()
                             return
                         
-                        tweets = TwitterService.get_twitter_rss(user.username)
+                        tweets = TwitterService.get_twitter_rss(user['username'])
                         if not tweets:
                             continue
                         
-                        last_seen = session.query(LastSeenUser).filter_by(
-                            chat_id=chat_id, 
-                            username=user.username
-                        ).first()
+                        last_seen = last_seen_col.find_one({
+                            "chat_id": chat_id, 
+                            "username": user['username']
+                        })
                         
                         new_tweets = []
-                        for entry in tweets[:settings.scan_depth]:
+                        for entry in tweets[:settings.get('scan_depth', 3)]:
                             tweet_id = getattr(entry, "id", None) or entry.link
-                            if last_seen and tweet_id == last_seen.tweet_id:
+                            if last_seen and tweet_id == last_seen.get('tweet_id'):
                                 break
                             new_tweets.append((tweet_id, entry))
                         
@@ -920,46 +771,47 @@ class AutoscanService:
                                 AutoscanService.send_tweet_with_image(
                                     chat_id, 
                                     entry, 
-                                    f"🍀 Autoscan @{user.username}:"
+                                    f"🍀 Autoscan @{user['username']}:"
                                 )
                                 sent_count += 1
                                 
                                 # Update last_seen after sending
                                 if last_seen:
-                                    last_seen.tweet_id = tweet_id
-                                else:
-                                    last_seen = LastSeenUser(
-                                        chat_id=chat_id, 
-                                        username=user.username, 
-                                        tweet_id=tweet_id
+                                    last_seen_col.update_one(
+                                        {"_id": last_seen['_id']},
+                                        {"$set": {"tweet_id": tweet_id}}
                                     )
-                                    session.add(last_seen)
-                                session.commit()
+                                else:
+                                    last_seen_col.insert_one({
+                                        "chat_id": chat_id, 
+                                        "username": user['username'], 
+                                        "tweet_id": tweet_id,
+                                        "type": "user"
+                                    })
                             except Exception as e:
-                                logger.error(f"Error sending tweet for @{user.username} to chat {chat_id}: {e}")
+                                logger.error(f"Error sending tweet for @{user['username']} to chat {chat_id}: {e}")
 
                 # Keyword autoscan
-                if settings.scan_keywords and sent_count < RATE_LIMIT_PER_RUN:
-                    keywords = session.query(Keyword).filter_by(chat_id=chat_id).all()
+                if settings.get('scan_keywords', True) and sent_count < RATE_LIMIT_PER_RUN:
+                    keywords = list(keywords_col.find({"chat_id": chat_id}))
                     for kw in keywords:
                         if sent_count >= RATE_LIMIT_PER_RUN:
                             logger.info("Rate limit reached. Pausing autoscan for this run.")
-                            session.close()
                             return
                         
-                        tweets = TwitterService.get_tweets_for_query(kw.keyword, limit=settings.scan_depth)
+                        tweets = TwitterService.get_tweets_for_query(kw['keyword'], limit=settings.get('scan_depth', 3))
                         if not tweets:
                             continue
                         
-                        last_seen = session.query(LastSeenKeyword).filter_by(
-                            chat_id=chat_id, 
-                            keyword=kw.keyword
-                        ).first()
+                        last_seen = last_seen_col.find_one({
+                            "chat_id": chat_id, 
+                            "keyword": kw['keyword']
+                        })
                         
                         new_tweets = []
                         for entry in tweets:
                             tweet_id = getattr(entry, "id", None) or entry.link
-                            if last_seen and tweet_id == last_seen.tweet_id:
+                            if last_seen and tweet_id == last_seen.get('tweet_id'):
                                 break
                             new_tweets.append((tweet_id, entry))
                         
@@ -968,27 +820,28 @@ class AutoscanService:
                                 AutoscanService.send_tweet_with_image(
                                     chat_id, 
                                     entry, 
-                                    f"🍀 Autoscan keyword '{kw.keyword}':"
+                                    f"🍀 Autoscan keyword '{kw['keyword']}':"
                                 )
                                 sent_count += 1
                                 
                                 # Update last_seen after sending
                                 if last_seen:
-                                    last_seen.tweet_id = tweet_id
-                                else:
-                                    last_seen = LastSeenKeyword(
-                                        chat_id=chat_id, 
-                                        keyword=kw.keyword, 
-                                        tweet_id=tweet_id
+                                    last_seen_col.update_one(
+                                        {"_id": last_seen['_id']},
+                                        {"$set": {"tweet_id": tweet_id}}
                                     )
-                                    session.add(last_seen)
-                                session.commit()
+                                else:
+                                    last_seen_col.insert_one({
+                                        "chat_id": chat_id, 
+                                        "keyword": kw['keyword'], 
+                                        "tweet_id": tweet_id,
+                                        "type": "keyword"
+                                    })
                             except Exception as e:
-                                logger.error(f"Error sending keyword '{kw.keyword}' in chat {chat_id}: {e}")
+                                logger.error(f"Error sending keyword '{kw['keyword']}' in chat {chat_id}: {e}")
             except Exception as e:
                 logger.error(f"Error scanning chat {chat_id}: {e}")
         
-        session.close()
         logger.info(f"🍀 Autoscan completed. Sent {sent_count} messages.")
 
 # --- Alert Checker ---
@@ -998,16 +851,16 @@ def check_alerts_job():
     
     for alert, current_price in triggered_alerts:
         try:
-            direction = "above" if alert.direction == "ABOVE" else "below"
+            direction = "above" if alert['direction'] == "ABOVE" else "below"
             message = (
                 f"🚨 Alert triggered!\n"
-                f"{alert.ticker} is now ${current_price:.2f} ({direction} ${alert.price:.2f})\n"
-                f"Alert ID: {alert.id}"
+                f"{alert['ticker']} is now ${current_price:.2f} ({direction} ${alert['price']:.2f})\n"
+                f"Alert ID: {alert['_id']}"
             )
-            bot.send_message(alert.chat_id, message)
+            bot.send_message(alert['chat_id'], message)
             
             # Remove the alert after triggering
-            AlertService.remove_alert(alert.chat_id, alert.id)
+            AlertService.remove_alert(alert['chat_id'], alert['_id'])
         except Exception as e:
             logger.error(f"Error sending alert notification: {e}")
     
@@ -1021,19 +874,14 @@ def telegram_webhook():
         
     with update_lock:
         update = Update.de_json(request.get_json())
-        session = SessionLocal()
         try:
-            if session.query(ProcessedUpdate).filter_by(update_id=update.update_id).first():
+            if processed_updates_col.find_one({"update_id": update.update_id}):
                 return "OK", 200
             bot.process_new_updates([update])
-            session.add(ProcessedUpdate(update_id=update.update_id))
-            session.commit()
+            processed_updates_col.insert_one({"update_id": update.update_id, "processed_at": datetime.utcnow()})
         except Exception as e:
             logger.error(f"Error processing update: {e}")
-            session.rollback()
             return "Error", 500
-        finally:
-            session.close()
     return "OK", 200
 
 @app.route("/")
